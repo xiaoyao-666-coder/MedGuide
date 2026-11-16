@@ -585,19 +585,23 @@ class MedGuideWorkflow:
         return state
 
     def risk(self, state: WorkflowState) -> WorkflowState:
+        # Risk is re-evaluated from the current message on every turn.
+        # A previous high-risk turn used to stick permanently (issue #5):
+        # any follow-up, even an unrelated question, kept returning the
+        # emergency text with no retrieval. The earlier high-risk turn is
+        # still preserved in ``risk_history`` and surfaced as a brief
+        # reminder by ``draft``; only the live level/flags/advice follow
+        # the current message.
         assessment = self.safety.screen(state.get("normalized_message", ""), state.get("profile", {}))
-        previous_level = state.get("risk_level")
-        previous_flags = list(state.get("risk_flags", []))
-        sticky_high = previous_level == "high"
-        if sticky_high or assessment.level == "high":
+        if assessment.level == "high":
             state["risk_level"] = "high"
-            state["risk_flags"] = list(dict.fromkeys(previous_flags + list(assessment.flags)))
+            state["risk_flags"] = list(assessment.flags)
             state["risk_advice"] = (
-                "建议立即联系当地急救服务或前往最近的急诊；不要仅依赖线上问答等待观察。"
+                "请立即拨打 120（中国大陆急救电话）或前往最近的急诊；不要仅依赖线上问答等待观察。"
             )
-        elif previous_level == "watch" or assessment.level == "watch":
+        elif assessment.level == "watch":
             state["risk_level"] = "watch"
-            state["risk_flags"] = list(dict.fromkeys(previous_flags + list(assessment.flags)))
+            state["risk_flags"] = list(assessment.flags)
             state["risk_advice"] = assessment.advice
         else:
             state["risk_level"] = assessment.level
@@ -609,7 +613,7 @@ class MedGuideWorkflow:
                 "at": datetime.now(timezone.utc).isoformat(),
                 "level": state["risk_level"],
                 "flags": list(state.get("risk_flags", [])),
-                "source": "sticky-history" if sticky_high else "rules",
+                "source": "rules",
             }
         )
         state["risk_history"] = history[-20:]
@@ -709,6 +713,18 @@ class MedGuideWorkflow:
         state["next_question"] = missing
         if missing and state.get("risk_level") != "high" and not state.get("structured_result"):
             response += f"\n\n为了缩小分流范围，下一步想确认：{missing}"
+        if state.get("risk_level") != "high":
+            # First normal turn after an emergency turn: keep a brief
+            # reminder so the earlier emergency is not silently forgotten,
+            # without locking the session in emergency mode (issue #5).
+            history = list(state.get("risk_history", []))
+            if len(history) >= 2 and history[-2].get("level") == "high" and history[-1].get("level") != "high":
+                prior_flags = [str(flag) for flag in history[-2].get("flags", []) if str(flag).strip()][:2]
+                if prior_flags:
+                    response += (
+                        f"\n\n提醒：如之前出现的{'、'.join(prior_flags)}再次出现或加重，"
+                        "请立即拨打 120 或前往最近的急诊。"
+                    )
         state["response"] = response
         return state
 
@@ -774,7 +790,9 @@ class MedGuideWorkflow:
             state["safety_blocked"] = True
             state["safety_block_reason"] = "unsafe-medical-instruction"
             return state
-        if "不代表诊断" not in response and state.get("risk_level") != "high":
+        if "不代表诊断" not in response:
+            # The disclaimer applies to emergency answers too (issue #5);
+            # it used to be skipped whenever the risk level was high.
             response += "\n\n提示：MedGuide 不替代医生诊断或处方。"
         state["response"] = response
         state["safety_blocked"] = False
