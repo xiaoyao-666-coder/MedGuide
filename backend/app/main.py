@@ -704,6 +704,17 @@ def _state_for_request(
     if request.request_id:
         state["request_id"] = request.request_id
         state["_request_fingerprint"] = _message_fingerprint(request.message)
+    else:
+        # A previous turn may have persisted request_id/_request_fingerprint
+        # in the stored state. A request without request_id must not inherit
+        # them: both _run_chat_transaction and stream_chat.run_sync read the
+        # identifier from this state, and the fingerprint check would compare
+        # the new message against the previous turn's identifier and 409
+        # every plain chat after an idempotent one (issue #22). The
+        # request_fingerprints/request_results tombstones are untouched, so
+        # idempotency itself is preserved.
+        state.pop("request_id", None)
+        state.pop("_request_fingerprint", None)
     return state
 
 
