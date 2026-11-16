@@ -222,3 +222,54 @@ def test_browser_deployment_is_same_origin_and_cookie_authenticated() -> None:
     assert 'header Strict-Transport-Security' in gateway
     assert 'MEDGUIDE_DOMAIN is required' in gateway_entrypoint
     assert "ports:" not in compose.split("medguide-gateway:", 1)[0]
+
+
+def test_demo_nginx_rate_limit_key_is_per_account_not_shared_remote_addr() -> None:
+    demo = (ROOT / "deploy" / "instabox" / "nginx.demo.conf").read_text(encoding="utf-8")
+    main = (ROOT / "frontend" / "nginx.conf").read_text(encoding="utf-8")
+    # The demo UI is published on the host loopback and every visitor
+    # arrives through the InstaBox platform proxy, so $remote_addr is
+    # the same Docker gateway address for all of them. The business-API
+    # zone must therefore be keyed on the server-issued session cookie
+    # (one cookie = one account), with anonymous requests falling back
+    # to the shared remote address (issue #27).
+    assert "map $cookie_medguide_session $medguide_api_key {" in demo
+    assert '"" $binary_remote_addr;' in demo
+    assert "default $cookie_medguide_session;" in demo
+    assert "limit_req_zone $medguide_api_key zone=medguide_api:10m rate=30r/m;" in demo
+    assert "limit_req_zone $binary_remote_addr zone=medguide_api" not in demo
+    # The limits themselves are unchanged.
+    assert "rate=30r/m" in demo
+    assert "limit_req_zone $binary_remote_addr zone=medguide_auth:10m rate=6r/m;" in demo
+    assert demo.count("limit_req_status 429;") == 2
+    assert "limit_req zone=medguide_api burst=10 nodelay;" in demo
+    assert "limit_req zone=medguide_auth burst=3 nodelay;" in demo
+    # The demo never builds identity from client-supplied headers: no
+    # real_ip directive outside of comments.
+    demo_code = "\n".join(
+        line for line in demo.splitlines() if not line.strip().startswith("#")
+    )
+    assert "real_ip_header" not in demo_code
+    assert "real_ip_recursive" not in demo_code
+    assert "set_real_ip_from" not in demo_code
+    # The main deployment is untouched: its nginx sits behind the
+    # operator-controlled Caddy gateway, which appends the true client
+    # IP, so $binary_remote_addr there is already per-client.
+    assert "limit_req_zone $binary_remote_addr zone=medguide_api:10m rate=30r/m;" in main
+    assert "limit_req_zone $binary_remote_addr zone=medguide_auth:10m rate=6r/m;" in main
+    assert "real_ip_header X-Forwarded-For;" in main
+    # Both demo topologies mount this file as the UI template, so the
+    # fix ships in both.
+    for relative in ("deploy/instabox/compose.demo.yml", "deploy/instabox/compose.local.yml"):
+        compose = (ROOT / relative).read_text(encoding="utf-8")
+        assert "./nginx.demo.conf" in compose
+        assert "MEDGUIDE_AUTH_COOKIE_NAME: medguide_session" in compose
+    # Structural sanity (no nginx binary on this host for nginx -t):
+    # balanced braces and every non-empty, non-comment directive line
+    # ends with ';', '{' or '}'.
+    assert demo.count("{") == demo.count("}")
+    for line in demo.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        assert stripped.endswith((";", "{", "}")), stripped
