@@ -1,6 +1,7 @@
 import { FormEvent, KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState } from "react";
 import { PASSWORD_INPUT_MAX_LENGTH, USERNAME_INPUT_MAX_LENGTH, validateAuthCredentials } from "./auth-validation";
 import { safeCitationSourceUrl } from "./source-url";
+import { formatFeedbackError } from "./feedback-error";
 import { QuestionStarters } from "./QuestionStarters";
 import { buildWorkflowStages, mergePipelineEvent, responsePipelineEvents, type PipelineEvent } from "./workflow-progress";
 import {
@@ -817,8 +818,11 @@ function App() {
           returnToAuthentication("登录状态已过期，请重新登录。");
           return;
         }
+        // Feedback failures must not reuse the chat input wording from
+        // formatHttpError ("请确认描述不为空且不超过 2000 字"): the
+        // question has nothing to do with a failed vote (issue #25).
         setError(requestError instanceof HttpResponseError
-          ? `反馈提交失败：${formatHttpError(requestError)}`
+          ? formatFeedbackError(requestError)
           : "反馈提交失败，请稍后重试。");
       }
     } finally {
