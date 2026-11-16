@@ -355,7 +355,12 @@ button.starter-prompt:focus-visible .starter-prompt-action,.inline-citations:foc
   .right-panel { right:12px; left:auto; }
   .left-rail.mobile-visible { --drawer-offset:-12px; display:flex; animation:drawer-arrive var(--motion-base) var(--ease-out); }
   .right-panel.mobile-visible { --drawer-offset:12px; display:block; animation:drawer-arrive var(--motion-base) var(--ease-out); }
-  .mobile-panel-backdrop { display:block; position:fixed; inset:64px 0 0; z-index:4; width:100%; padding:0; background:#14202b33; border:0; animation:backdrop-arrive var(--motion-fast) ease-out; }
+  /* The backdrop covers the whole viewport, including the topbar strip:
+     the topbar is inert while a panel is open, so without a backdrop
+     over it a tap on the topbar would do nothing at all (issue #28) --
+     it must instead reach this button and close the panel. The drawers
+     (z-index 5) stay above the backdrop (z-index 4) and keep working. */
+  .mobile-panel-backdrop { display:block; position:fixed; inset:0; z-index:4; width:100%; padding:0; background:#14202b33; border:0; animation:backdrop-arrive var(--motion-fast) ease-out; }
   .mobile-trigger,.secondary-button { display:inline-flex; }
   .close-mobile { display:inline-grid; }
   .icon-button { min-width:40px; min-height:40px; }
@@ -408,7 +413,6 @@ button.starter-prompt:focus-visible .starter-prompt-action,.inline-citations:foc
   .secondary-button { min-height:35px; padding:0 8px; font-size:11px; }
   .left-rail,.right-panel { top:64px; bottom:7px; left:7px; width:min(354px,calc(100vw - 14px)); }
   .right-panel { left:auto; right:7px; }
-  .mobile-panel-backdrop { inset:58px 0 0; }
   .messages-scroller { padding:20px 15px; }
   .is-welcome .messages-scroller { padding:1px 18px 18px; }
   .welcome-view { margin:0 auto; padding:13px 0 10px; }
