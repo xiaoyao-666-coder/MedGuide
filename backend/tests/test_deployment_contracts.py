@@ -222,3 +222,52 @@ def test_browser_deployment_is_same_origin_and_cookie_authenticated() -> None:
     assert 'header Strict-Transport-Security' in gateway
     assert 'MEDGUIDE_DOMAIN is required' in gateway_entrypoint
     assert "ports:" not in compose.split("medguide-gateway:", 1)[0]
+
+
+def _compose_service_block(compose: str, name: str) -> str:
+    """The text of one service block in a compose file (no yaml needed).
+
+    Services are the two-space-indented keys under ``services:``; the
+    block runs until the next service or the next top-level key.
+    """
+    start = compose.index(f"  {name}:")
+    rest = compose[start + len(f"  {name}:") :]
+    lines = rest.splitlines(keepends=True)
+    block = []
+    for line in lines:
+        if not line.strip():
+            block.append(line)
+            continue
+        # A sibling service header (exactly two spaces) or a top-level key
+        # (column 0) ends the block; anything deeper indented belongs to it.
+        indent = len(line) - len(line.lstrip(" "))
+        if indent in (0, 2) and not line.startswith("\t"):
+            break
+        block.append(line)
+    return "".join(block)
+
+
+def test_main_compose_services_restart_and_have_memory_limits() -> None:
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    # Top-level restart/mem_limit are the keys plain `docker compose up`
+    # honours; deploy.restart_policy / deploy.resources are swarm-only and
+    # silently ignored here, so the main compose must not contain a deploy
+    # block at all (issue #29).
+    assert "deploy:" not in compose
+    assert compose.count("restart: unless-stopped") == 3
+    assert compose.count("mem_limit: 1g") == 1
+    assert compose.count("mem_limit: 128m") == 2
+    assert _compose_service_block(compose, "medguide-api").count("restart: unless-stopped") == 1
+    assert "mem_limit: 1g" in _compose_service_block(compose, "medguide-api")
+    assert "mem_limit: 128m" in _compose_service_block(compose, "medguide-ui")
+    assert "mem_limit: 128m" in _compose_service_block(compose, "medguide-gateway")
+
+
+def test_demo_and_local_composes_keep_the_same_restart_and_limits() -> None:
+    for relative in ("deploy/instabox/compose.demo.yml", "deploy/instabox/compose.local.yml"):
+        compose = (ROOT / relative).read_text(encoding="utf-8")
+        assert "deploy:" not in compose
+        assert "restart: unless-stopped" in _compose_service_block(compose, "medguide-api")
+        assert "mem_limit: 1g" in _compose_service_block(compose, "medguide-api")
+        assert "restart: unless-stopped" in _compose_service_block(compose, "medguide-ui")
+        assert "mem_limit: 128m" in _compose_service_block(compose, "medguide-ui")
