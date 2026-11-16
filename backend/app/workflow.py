@@ -147,7 +147,7 @@ class MedGuideWorkflow:
             r"(?:处方|用药方案|治疗方案|停药|停用|停服|加量|减量|换药)\s*"
             r"(?:建议|指令|结论|方案)?",
             r"(?:(?:(?:我|我们|医生|药师)\s*)?(?:建议|提醒|请)\s*(?:你|您|患者)?\s*)?"
-            r"(?:不能|不可|不要|请勿|切勿|不应|不得|不建议)\s*(?:自行|随意|擅自)\s*"
+            r"(?:不能|不可|不要|请勿|切勿|不应|不得|不建议|不)\s*(?:自行|随意|擅自)\s*"
             r"(?:停药|停用|停服|停止服用|停止使用|暂停服用|服用|口服|使用|吃药|"
             r"加量|减量|加倍|减半|调高|调低|换药|调整用药)"
             r"(?:(?!但是|然而|不过|可是|却|但|所以|因此|那就|那么|建议|请|"
@@ -179,7 +179,7 @@ class MedGuideWorkflow:
         self.retriever = retriever
         self.sql_guard = sql_guard
         self.safety = safety
-        self.router = IntentRouter()
+        self.router = IntentRouter(drug_names=retriever.drug_names)
         self.answerer = answerer or OpenAIAnswerer()
         self.cleaner = MedicalDocumentCleaner()
         self.langgraph_available = self._check_langgraph()
@@ -669,6 +669,12 @@ class MedGuideWorkflow:
             if result.get("blocked"):
                 if getattr(self.answerer, "local", False) and str(result.get("reason", "")).startswith("尚未连接医院业务数据"):
                     response = f"{result['reason']}。请通过医院官方渠道确认相关信息。"
+                elif str(result.get("reason", "")).startswith(("请提供需要查询的具体", "未能识别出已登记的")):
+                    # Clarification, not a safety block: the request was
+                    # understood as a lookup but no registered entity
+                    # matched, so say so instead of implying a data
+                    # protection refusal or "no stock".
+                    response = f"{result['reason']}。可以换成查询药品库存、科室排班或检查价格。"
                 else:
                     response = f"为了保护数据安全，这次查询没有执行：{result.get('reason')}。可以换成查询药品库存、科室排班或检查价格。"
             elif result.get("rows"):
