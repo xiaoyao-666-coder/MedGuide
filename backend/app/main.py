@@ -565,9 +565,13 @@ def _require_access(
     # A proxy-validated cookie can expire or be revoked before this handler.
     # Cookie-bearing offline requests must not fall back to anonymous access;
     # production service-header priority remains unchanged.
-    if principal is None and (
-        getattr(current, "production", False) or getattr(current, "local", False) or session_token is not None
-    ):
+    # Issue #6: authentication is required in every mode. Test/offline used
+    # to let requests without any credential through (while rejecting an
+    # invalid cookie), which exposed protected APIs and other users'
+    # sessions anonymously. There is intentionally no anonymous fallback
+    # switch: /api/health and /api/ready stay public for probes, and every
+    # other caller must present a valid session cookie or service token.
+    if principal is None:
         raise HTTPException(status_code=401, detail="请先登录")
     _require_runtime(current)
     return principal
@@ -580,11 +584,19 @@ def _require_service_access(
     api_key: str | None = None,
 ) -> str | None:
     _require_secure_transport(current, request)
-    if not current.production:
-        return None
-    principal = _principal_from_headers(current, authorization, api_key)
-    _require_runtime(current)
-    return principal
+    if current.production:
+        principal = _principal_from_headers(current, authorization, api_key)
+        _require_runtime(current)
+        return principal
+    # Issue #6: the operator endpoint was wide open outside production
+    # (this function returned before any check). No service API tokens are
+    # configured in test/offline/local modes, so a logged-in user session is
+    # the credential here; anonymous access is never allowed. Production
+    # keeps the stricter service-token-only rule.
+    username = _username_from_cookie(current, _session_token_from_request(current, request))
+    if username is None:
+        raise HTTPException(status_code=401, detail="请先登录")
+    return f"user:{username}"
 
 
 def _message_fingerprint(message: str) -> str:
