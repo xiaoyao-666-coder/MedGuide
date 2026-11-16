@@ -1340,6 +1340,53 @@ def feedback(
     }
 
 
+@app.get("/api/feedback/comments")
+def feedback_comments(
+    http_request: Request,
+    authorization: str | None = Header(default=None),
+    api_key: str | None = Header(default=None, alias="X-API-Key"),
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """List stored feedback comments, oldest update first.
+
+    Same authentication as POST /api/feedback. Only comments on sessions
+    owned by the caller are visible; a comment whose session has expired
+    is no longer listed. Comment text is never exposed through the
+    anonymous /api/metrics snapshot (issue #21).
+    """
+    current = get_services()
+    owner_id = _require_access(
+        current,
+        http_request,
+        authorization,
+        api_key,
+        _session_token_from_request(current, http_request),
+    )
+    if session_id is not None:
+        try:
+            state = current.store.get(session_id, owner_id=owner_id)
+        except SessionAuthorizationError as exc:
+            raise HTTPException(status_code=404, detail="会话不存在或已过期") from exc
+        except SessionBackendError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        if state is None:
+            raise HTTPException(status_code=404, detail="会话不存在或已过期")
+    visible: list[dict[str, Any]] = []
+    for comment in current.metrics.feedback_comments():
+        if session_id is not None and comment.get("session_id") != session_id:
+            continue
+        try:
+            state = current.store.get(str(comment.get("session_id") or ""), owner_id=owner_id)
+        except SessionAuthorizationError:
+            continue
+        except SessionBackendError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        if state is None:
+            continue
+        visible.append(comment)
+    return {"comments": visible, "count": len(visible)}
+
+
 @app.get("/api/metrics")
 def metrics(
     http_request: Request,
