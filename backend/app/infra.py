@@ -157,6 +157,18 @@ redis.call('EXPIRE', KEYS[2], ARGV[4])
 return 1
 """
 
+    _REMOVE_FEEDBACK_SCRIPT = """
+local previous = redis.call('HGET', KEYS[1], ARGV[1])
+if previous ~= 'up' and previous ~= 'down' then
+    return 0
+end
+redis.call('HDEL', KEYS[1], ARGV[1])
+redis.call('HINCRBY', KEYS[2], 'feedback_' .. previous, -1)
+redis.call('EXPIRE', KEYS[1], ARGV[2])
+redis.call('EXPIRE', KEYS[2], ARGV[2])
+return 1
+"""
+
     _RECORD_METRICS_SCRIPT = """
 if redis.call('EXISTS', KEYS[1]) == 1 then
     redis.call('EXPIRE', KEYS[1], ARGV[1])
@@ -550,6 +562,31 @@ return 1
                 key,
                 rating,
                 "1" if comment else "0",
+                self.ttl_seconds,
+            )
+            return bool(int(changed))
+        except Exception as exc:
+            self._mark_unavailable(exc)
+            return None
+
+    def remove_feedback(
+        self,
+        session_id: str,
+        message_id: str,
+    ) -> bool | None:
+        if not self.ensure_ready() or self.client is None:
+            return None
+        try:
+            evaluator = getattr(self.client, "eval", None)
+            if not callable(evaluator):
+                return None
+            key = hashlib.sha256(f"{session_id}\x00{message_id}".encode("utf-8")).hexdigest()
+            changed = evaluator(
+                self._REMOVE_FEEDBACK_SCRIPT,
+                2,
+                self.metrics_feedback_key,
+                self.metrics_key,
+                key,
                 self.ttl_seconds,
             )
             return bool(int(changed))

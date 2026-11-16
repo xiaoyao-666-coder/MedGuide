@@ -46,6 +46,8 @@ class _AtomicRedis:
                 return self._release_request(keys, args)
             if script == RedisSessionAdapter._UPSERT_FEEDBACK_SCRIPT:
                 return self._upsert_feedback(keys, args)
+            if script == RedisSessionAdapter._REMOVE_FEEDBACK_SCRIPT:
+                return self._remove_feedback(keys, args)
             if script == RedisSessionAdapter._RECORD_METRICS_SCRIPT:
                 return self._record_metrics(keys, args)
         raise AssertionError("unexpected Lua script")
@@ -126,6 +128,19 @@ class _AtomicRedis:
         metrics[rating_key] = int(metrics.get(rating_key, 0)) + 1
         if commented == "1" and previous is None:
             metrics["feedback_commented"] = int(metrics.get("feedback_commented", 0)) + 1
+        return 1
+
+    def _remove_feedback(self, keys, args):
+        feedback_key, metrics_key = keys
+        field, _ttl = args
+        feedback = self.hashes.setdefault(feedback_key, {})
+        metrics = self.hashes.setdefault(metrics_key, {})
+        previous = feedback.get(field)
+        if previous not in {"up", "down"}:
+            return 0
+        del feedback[field]
+        old_key = f"feedback_{previous}"
+        metrics[old_key] = int(metrics.get(old_key, 0)) - 1
         return 1
 
     def _record_metrics(self, keys, args):
@@ -298,6 +313,26 @@ def test_feedback_upsert_is_atomic_under_concurrent_duplicates_and_changes() -> 
     metrics = redis.hashes[adapter.metrics_key]
     assert metrics["feedback_up"] == 0
     assert metrics["feedback_down"] == 1
+
+
+def test_feedback_remove_is_atomic_under_concurrent_revokes() -> None:
+    redis = _AtomicRedis()
+    adapter = RedisSessionAdapter(client=redis)
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        first_changes = list(
+            pool.map(lambda _: adapter.upsert_feedback("session", "message", "up"), range(64))
+        )
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        removes = list(
+            pool.map(lambda _: adapter.remove_feedback("session", "message"), range(64))
+        )
+
+    assert sum(bool(changed) for changed in first_changes) == 1
+    assert sum(bool(changed) for changed in removes) == 1
+    metrics = redis.hashes[adapter.metrics_key]
+    assert metrics["feedback_up"] == 0
+    assert adapter.remove_feedback("session", "message") is False
 
 
 def test_shared_metrics_record_is_atomic_and_deduplicated_under_concurrency() -> None:

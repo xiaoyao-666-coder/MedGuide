@@ -1340,6 +1340,44 @@ def feedback(
     }
 
 
+@app.delete("/api/feedback")
+def revoke_feedback(
+    http_request: Request,
+    session_id: str = Query(min_length=1),
+    message_id: str = Query(min_length=1, max_length=128),
+    authorization: str | None = Header(default=None),
+    api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict[str, Any]:
+    current = get_services()
+    owner_id = _require_access(
+        current,
+        http_request,
+        authorization,
+        api_key,
+        _session_token_from_request(current, http_request),
+    )
+    try:
+        state = current.store.get(session_id, owner_id=owner_id)
+    except SessionAuthorizationError as exc:
+        raise HTTPException(status_code=404, detail="会话不存在或已过期") from exc
+    except SessionBackendError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if state is None:
+        raise HTTPException(status_code=404, detail="会话不存在或已过期")
+    if message_id not in state.get("response_ids", []):
+        raise HTTPException(status_code=422, detail="反馈目标不属于当前会话")
+    changed = current.metrics.remove_feedback(
+        message_id,
+        session_id=session_id,
+    )
+    return {
+        "accepted": True,
+        "changed": changed,
+        "session_id": session_id,
+        "message_id": message_id,
+    }
+
+
 @app.get("/api/metrics")
 def metrics(
     http_request: Request,

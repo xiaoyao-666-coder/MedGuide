@@ -3,6 +3,7 @@ import { PASSWORD_INPUT_MAX_LENGTH, USERNAME_INPUT_MAX_LENGTH, validateAuthCrede
 import { safeCitationSourceUrl } from "./source-url";
 import { QuestionStarters } from "./QuestionStarters";
 import { buildWorkflowStages, mergePipelineEvent, responsePipelineEvents, type PipelineEvent } from "./workflow-progress";
+import { applyFeedbackRevoke, applyFeedbackVote, feedbackAction, type FeedbackVote } from "./feedback-vote";
 import {
   Activity,
   AlertTriangle,
@@ -257,7 +258,7 @@ function App() {
   const [structuredResult, setStructuredResult] = useState<StructuredResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mobilePanel, setMobilePanel] = useState<"left" | "right" | null>(null);
-  const [feedbackSent, setFeedbackSent] = useState<Record<string, "up" | "down">>({});
+  const [feedbackSent, setFeedbackSent] = useState<FeedbackVote>({});
   const [feedbackPending, setFeedbackPending] = useState<Record<string, boolean>>({});
   const bottomRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -794,22 +795,39 @@ function App() {
   async function sendFeedback(messageId: string, rating: "up" | "down") {
     const message = messages.find((item) => item.id === messageId);
     const sessionId = message?.sessionId || activeSessionIdRef.current;
-    if (!sessionId || feedbackSent[messageId] || feedbackPending[messageId]) return;
+    if (!sessionId || feedbackPending[messageId]) return;
+    // A recorded vote no longer blocks the buttons: clicking the other
+    // button changes the vote, clicking the same one revokes it (#19).
+    // The backend upserts votes, so a change is one POST; a revoke is a
+    // DELETE, which is idempotent on the server and needs no
+    // Idempotency-Key. Only the in-flight guard stays: while a request
+    // for this answer is pending, further clicks are ignored.
+    const action = feedbackAction(feedbackSent[messageId], rating);
     const generation = generationRef.current;
     setFeedbackPending((current) => ({ ...current, [messageId]: true }));
     try {
-      const response = await apiFetch("/api/feedback", {
-        method: "POST",
-        headers: apiHeaders({
-          "Content-Type": "application/json",
-          // Retried clicks for one answer/rating must remain one metric event.
-          "Idempotency-Key": `${sessionId}:${messageId}:${rating}`,
-        }),
-        body: JSON.stringify({ session_id: sessionId, message_id: messageId, rating }),
-      });
-      await ensureResponseOk(response);
+      if (action === "revoke") {
+        const response = await apiFetch(
+          `/api/feedback?session_id=${encodeURIComponent(sessionId)}&message_id=${encodeURIComponent(messageId)}`,
+          { method: "DELETE", headers: apiHeaders({}) },
+        );
+        await ensureResponseOk(response);
+      } else {
+        const response = await apiFetch("/api/feedback", {
+          method: "POST",
+          headers: apiHeaders({
+            "Content-Type": "application/json",
+            // Retried clicks for one answer/rating must remain one metric event.
+            "Idempotency-Key": `${sessionId}:${messageId}:${rating}`,
+          }),
+          body: JSON.stringify({ session_id: sessionId, message_id: messageId, rating }),
+        });
+        await ensureResponseOk(response);
+      }
       if (generationRef.current === generation) {
-        setFeedbackSent((current) => ({ ...current, [messageId]: rating }));
+        setFeedbackSent((current) => (action === "revoke"
+          ? applyFeedbackRevoke(current, messageId)
+          : applyFeedbackVote(current, messageId, rating)));
       }
     } catch (requestError) {
       if (generationRef.current === generation) {
@@ -817,9 +835,14 @@ function App() {
           returnToAuthentication("登录状态已过期，请重新登录。");
           return;
         }
-        setError(requestError instanceof HttpResponseError
-          ? `反馈提交失败：${formatHttpError(requestError)}`
-          : "反馈提交失败，请稍后重试。");
+        // The previous vote stays selected on failure: the local state
+        // is only updated after a successful response, so nothing to
+        // roll back here.
+        setError(action === "revoke"
+          ? "取消反馈失败，请稍后重试。"
+          : requestError instanceof HttpResponseError
+            ? `反馈提交失败：${formatHttpError(requestError)}`
+            : "反馈提交失败，请稍后重试。");
       }
     } finally {
       setFeedbackPending((current) => {
@@ -985,7 +1008,7 @@ function App() {
                     <button type="button" className="inline-citations" onClick={(event) => showReferences(event.currentTarget, message.id)}><BookOpen size={14} /><span>查看 {message.citations.length} 条参考资料</span><ArrowUpRight size={13} /></button>
                   )}
                   {message.role === "assistant" && message.latency !== undefined && <div className="message-latency"><Clock3 size={12} />响应 {Math.round(message.latency)} ms</div>}
-                  {message.role === "assistant" && message.id !== "welcome" && <div className="message-feedback"><span>这条回答有帮助吗？</span><button className={feedbackSent[message.id] === "up" ? "selected" : ""} onClick={() => void sendFeedback(message.id, "up")} disabled={feedbackPending[message.id]} aria-label="回答有帮助" title="回答有帮助"><ThumbsUp size={13} /></button><button className={feedbackSent[message.id] === "down" ? "selected" : ""} onClick={() => void sendFeedback(message.id, "down")} disabled={feedbackPending[message.id]} aria-label="回答需要改进" title="回答需要改进"><ThumbsDown size={13} /></button></div>}
+                  {message.role === "assistant" && message.id !== "welcome" && <div className="message-feedback"><span>这条回答有帮助吗？</span><button className={feedbackSent[message.id] === "up" ? "selected" : ""} onClick={() => void sendFeedback(message.id, "up")} disabled={feedbackPending[message.id]} aria-label="回答有帮助" aria-pressed={feedbackSent[message.id] === "up"} title={feedbackSent[message.id] === "up" ? "已标记为有帮助，再次点击取消" : "回答有帮助"}><ThumbsUp size={13} /></button><button className={feedbackSent[message.id] === "down" ? "selected" : ""} onClick={() => void sendFeedback(message.id, "down")} disabled={feedbackPending[message.id]} aria-label="回答需要改进" aria-pressed={feedbackSent[message.id] === "down"} title={feedbackSent[message.id] === "down" ? "已标记为需要改进，再次点击取消" : "回答需要改进"}><ThumbsDown size={13} /></button></div>}
                 </div>
               </article>
             ))}

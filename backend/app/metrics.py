@@ -108,6 +108,36 @@ class MetricsStore:
                 self.feedback["commented"] += 1
             return True
 
+    def remove_feedback(
+        self,
+        message_id: str | None = None,
+        *,
+        session_id: str | None = None,
+    ) -> bool:
+        # Removing a vote only removes the rating itself. "commented" counts
+        # messages that once carried a comment, so a revoke does not decrement
+        # it; comment storage/readback belongs to issue #21, not this one.
+        shared = getattr(self.backend, "remove_feedback", None) if self.backend is not None else None
+        if callable(shared) and message_id:
+            try:
+                result = shared(session_id or "", message_id)
+                if result is not None:
+                    return bool(result)
+            except Exception:
+                pass
+        with self._lock:
+            feedback_key = f"{session_id}:{message_id}" if session_id and message_id else message_id
+            if not feedback_key:
+                return False
+            previous = self.feedback_by_message.get(feedback_key)
+            if not previous:
+                return False
+            self.feedback[previous] -= 1
+            if self.feedback[previous] <= 0:
+                self.feedback.pop(previous, None)
+            del self.feedback_by_message[feedback_key]
+            return True
+
     def snapshot(self) -> dict:
         shared = getattr(self.backend, "metrics_snapshot", None) if self.backend is not None else None
         if callable(shared):
