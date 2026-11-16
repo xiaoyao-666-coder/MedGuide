@@ -26,7 +26,7 @@ MedGuide 是面向健康信息整理与就医指引的可审计服务。系统�
 Copy-Item .env.template .env
 ```
 
-生产模式至少填写 `MEDGUIDE_DOMAIN`、`OPENAI_API_KEY`、`OPENAI_BASE_URL`、`OPENAI_MODEL`、`REDIS_URL` 和 `MEDGUIDE_AUTH_DSN`。`MEDGUIDE_DOMAIN` 必须是已经解析到部署主机的公网域名；内置 Caddy 网关会自动申请并续期 TLS 证书。知识后端默认是 `milvus`，此时还必须填写 `MILVUS_URI`；若只使用经过审核并生成索引的词法知识库，请将 `MEDGUIDE_KNOWLEDGE_BACKEND` 明确设为 `bm25`。供应商地址填写到 `/v1` 基础路径，SDK 会调用标准 `/v1/chat/completions`：
+生产模式至少填写 `MEDGUIDE_DOMAIN`、`OPENAI_API_KEY`、`OPENAI_BASE_URL`、`OPENAI_MODEL`、`REDIS_URL` 和 `MEDGUIDE_AUTH_DSN`。`MEDGUIDE_DOMAIN` 必须是已经解析到部署主机的公网域名；内置 Caddy 网关会自动申请并续期 TLS 证书。知识后端默认是 `milvus`，此时还必须填写 `MILVUS_URI`；若只使用经过审核并生成索引的词法知识库，请将 `MEDGUIDE_KNOWLEDGE_BACKEND` 明确设为 `bm25`。API 容器在启动前会校验生产必填依赖（`OPENAI_API_KEY`、`OPENAI_MODEL`、`REDIS_URL`、`MEDGUIDE_AUTH_DSN`，`milvus` 后端时还有 `MILVUS_URI`），缺失时直接报错退出并指明缺了哪一项；按提示补齐 `.env` 后重新 `docker compose up --build -d`。供应商地址填写到 `/v1` 基础路径，SDK 会调用标准 `/v1/chat/completions`：
 
 ```text
 OPENAI_BASE_URL=<OpenAI-compatible API base URL>
