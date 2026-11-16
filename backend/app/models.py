@@ -32,6 +32,10 @@ class WorkflowState(TypedDict, total=False):
     risk_history: list[dict[str, Any]]
     citations: list[dict[str, Any]]
     structured_result: dict[str, Any] | None
+    # True when a content search ran but no topical document matched, so
+    # the answer must state the knowledge-base boundary instead of
+    # presenting unrelated material (issue #2).
+    retrieval_insufficient: bool
     risk_advice: str
     rewritten_query: str
     response: str

@@ -618,6 +618,7 @@ class MedGuideWorkflow:
 
     def retrieve(self, state: WorkflowState) -> WorkflowState:
         intent = state.get("intent", "unknown")
+        state["retrieval_insufficient"] = False
         if intent in ("structured",) or state.get("risk_level") == "high":
             state["citations"] = []
             return state
@@ -634,6 +635,10 @@ class MedGuideWorkflow:
                 query = "；".join(focused)
         state["rewritten_query"] = query
         state["citations"] = [citation.as_dict() for citation in self.retriever.search(query, intent, top_k=4)]
+        state["retrieval_insufficient"] = bool(
+            intent in ("disease", "drug", "exam", "department", "faq")
+            and not state["citations"]
+        )
         return state
 
     def structured_query(self, state: WorkflowState) -> WorkflowState:
@@ -702,6 +707,18 @@ class MedGuideWorkflow:
                     response = f"根据当前知识库，和你描述最相关的资料是“{citations[0]['title']}”：{lead}"
                     response += "\n\n这只是基于有限信息的健康信息整理，不代表诊断。若症状持续、加重或影响日常活动，建议预约线下医生。"
                     state["answer_source"] = "retrieval-template"
+            elif state.get("retrieval_insufficient"):
+                # No topical document matched: say so plainly instead of
+                # padding the answer with unrelated material (issue #2).
+                # The generic care-seeking advice below is not a diagnosis
+                # for the user's complaint.
+                response = (
+                    "当前知识库中没有与你描述的情况直接相关的资料，我无法据此给出针对性的信息整理。"
+                    "这不代表没有问题，只是说明现有资料覆盖不到这个主题。"
+                    "一般建议：如果症状持续、加重或影响日常活动，请及时到线下医疗机构就诊；"
+                    "如出现胸痛、呼吸困难、意识改变等情况，请立即就医。"
+                )
+                state["answer_source"] = "insufficient-data"
             else:
                 response = "我还缺少足够的背景信息来给出可靠的分流建议。请补充年龄、症状持续多久，以及是否伴随发热、疼痛加重或呼吸困难。"
                 state["answer_source"] = "clarification-template"

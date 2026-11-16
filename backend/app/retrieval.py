@@ -15,6 +15,26 @@ from .models import Citation, Intent, KnowledgeDocument, PatientProfile
 from .ingestion import DocumentChunk, MedicalDocumentCleaner, load_catalog
 from .infra import _adapter_retry_delay, _adapter_timeout
 
+# Tokens that name only a generic aspect of a complaint — pain in
+# general, a duration, a severity, a generic noun — rather than a topic
+# (a symptom, disease, body part, drug, exam or department). A citation
+# justified by such tokens alone is not evidence that the document is
+# about the user's question: "腿关节持续疼痛" used to cite the UTI
+# document through "疼痛" alone, and "掉头发很严重" through "严重"
+# (issue #2). Specific pains name a body part ("头痛", "胸痛", "腹痛",
+# "腰痛", "关节痛", "咽痛") and are topics, not generic tokens.
+GENERIC_MATCH_TOKENS: frozenset[str] = frozenset(
+    {
+        "疼痛",  # pain in general
+        "持续", "多久", "几天", "时间",  # duration words
+        "严重",  # severity word
+        "症状", "问题",  # generic nouns
+        "怎么办", "怎么",  # question words
+        "难受", "不舒服",  # generic feeling words
+        "担心",  # emotion word
+    }
+)
+
 
 class IntentRouter:
     KEYWORDS: dict[Intent, tuple[str, ...]] = {
@@ -278,6 +298,21 @@ class HybridRetriever:
                 candidate = {"chunk": remote_chunk, "bm25": 0.0, "vector": 0.0}
                 candidates_by_id[hit_id] = candidate
             candidate["vector"] = self._remote_score(hit) or 0.0
+
+        # A citation must share at least one topical token with the query.
+        # Generic descriptors alone cannot justify one (see
+        # GENERIC_MATCH_TOKENS). A pure score floor cannot do this job:
+        # the false UTI match for "腿关节持续疼痛" scored higher (fused
+        # 0.55) than a genuine one ("感冒了怎么办", 0.50), so the gate is
+        # on which tokens match, not on the score. This also covers
+        # remote vector hits, whose scores alone say nothing about topic.
+        query_meaningful = meaningful_tokens(query)
+        candidates_by_id = {
+            chunk_id: candidate
+            for chunk_id, candidate in candidates_by_id.items()
+            if (query_meaningful & BM25Index._chunk_meaningful_tokens(candidate["chunk"]))
+            - GENERIC_MATCH_TOKENS
+        }
 
         candidates: list[tuple[float, float, float, DocumentChunk]] = []
         for candidate in candidates_by_id.values():
