@@ -188,10 +188,11 @@ class HybridRetriever:
             intent=intent,
             allowed_terms=self._embedding_query_terms,
         )
-        provider_name = str(getattr(self.embedding_provider.spec, "provider", ""))
-        should_embed = self.remote_required or (
-            self.local_vector_search and provider_name != "local"
-        )
+        # The local Hash provider is a real embedding provider in test and
+        # offline modes; excluding it left the precomputed _local_vectors
+        # unused and every citation labelled "bm25". Embed whenever local
+        # vector search is enabled, regardless of provider.
+        should_embed = self.remote_required or self.local_vector_search
         if should_embed and self.embedding_provider.available:
             try:
                 query_vector = self.embedding_provider.embed([embedding_query])[0]
@@ -238,19 +239,19 @@ class HybridRetriever:
                     mark_unavailable()
 
         candidates_by_id: dict[str, dict[str, Any]] = {
-            hit.chunk.id: {"chunk": hit.chunk, "bm25": hit.score, "vector": 0.0}
+            hit.chunk.id: {"chunk": hit.chunk, "bm25": hit.score, "vector": 0.0, "vector_source": None}
             for hit in lexical_hits
         }
         if (
             self.local_vector_search
             and not self.remote_required
-            and provider_name != "local"
             and query_vector is not None
         ):
             for candidate in candidates_by_id.values():
                 local_vector = self._local_vectors.get(candidate["chunk"].id)
                 if local_vector is not None:
                     candidate["vector"] = self._cosine(query_vector, local_vector)
+                    candidate["vector_source"] = "local"
         for hit_id, hit in remote_hits.items():
             text = self.cleaner.clean(str(hit.get("text", "")))
             if not text:
@@ -275,9 +276,10 @@ class HybridRetriever:
                 continue
             candidate = candidates_by_id.get(hit_id)
             if candidate is None:
-                candidate = {"chunk": remote_chunk, "bm25": 0.0, "vector": 0.0}
+                candidate = {"chunk": remote_chunk, "bm25": 0.0, "vector": 0.0, "vector_source": None}
                 candidates_by_id[hit_id] = candidate
             candidate["vector"] = self._remote_score(hit) or 0.0
+            candidate["vector_source"] = "remote"
 
         candidates: list[tuple[float, float, float, DocumentChunk]] = []
         for candidate in candidates_by_id.values():
@@ -287,7 +289,16 @@ class HybridRetriever:
             lexical_score = bm25 / (bm25 + 5.0) if bm25 > 0 else 0.0
             intent_boost = 0.08 if chunk.metadata.get("category") == intent else 0.0
             if bm25 > 0 and vector > 0:
-                fused = 0.72 * vector + 0.20 * lexical_score + intent_boost
+                if candidate.get("vector_source") == "local":
+                    # Local vectors are 64-dim token hashes, a much weaker
+                    # relevance signal than dense remote embeddings: the
+                    # same weights would let hash collisions outrank BM25
+                    # (e.g. an X-ray doc outranking the blood-test doc for
+                    # a 血常规 query). Let BM25 carry the ranking and use
+                    # the local vector as a secondary cue.
+                    fused = 0.25 * vector + 0.60 * lexical_score + intent_boost
+                else:
+                    fused = 0.72 * vector + 0.20 * lexical_score + intent_boost
             elif vector > 0:
                 fused = 0.84 * vector + intent_boost
             else:

@@ -115,13 +115,20 @@ class SQLQueryResult:
     rows: tuple[dict[str, Any], ...]
     blocked: bool = False
     reason: str | None = None
+    # True when the rows come from the built-in seeded sample database
+    # (SQLite test/local backend) rather than a connected production
+    # source, so callers can tell sample data apart from live data.
+    sample_data: bool = False
 
     def as_dict(self) -> dict[str, Any]:
+        # The SQL text itself is an internal detail: it must never cross
+        # the API boundary, where it would expose table/column layout.
+        # Internal callers that need the statement read ``.sql`` directly.
         return {
             "intent": self.intent,
-            "sql": self.sql,
             "columns": list(self.columns),
             "rows": [dict(row) for row in self.rows],
             "blocked": self.blocked,
             "reason": self.reason,
+            "sample_data": self.sample_data,
         }

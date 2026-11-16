@@ -75,11 +75,15 @@ type SessionState = {
 
 type StructuredResult = {
   intent: string;
-  sql: string;
+  /** SQL text is no longer sent by the API (issue #8 6d); kept optional
+      so older servers that still send it do not break the type. */
+  sql?: string;
   columns: string[];
   rows: Record<string, string | number>[];
   blocked: boolean;
   reason?: string | null;
+  /** True when the rows come from the built-in sample database. */
+  sample_data?: boolean;
 };
 
 type Message = {
@@ -1043,7 +1047,7 @@ function App() {
           {referenceCitations.some((citation) => citation.source.includes("OGL-3.0")) && <p className="content-license">部分资料为项目中文改编，未经原机构审核。<br />Contains public sector information licensed under the <a href="https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/" target="_blank" rel="noreferrer">Open Government Licence v3.0</a>.</p>}
 
 
-          {structuredResult && <section className="panel-section query-section"><div className="section-heading"><div><span className="section-kicker">只读数据查询</span><h2>结构化结果</h2></div><ShieldCheck size={16} /></div>{structuredResult.blocked ? <p className="query-blocked">{structuredResult.reason}</p> : <div className="query-table">{structuredResult.rows.map((row, index) => <div className="query-row" key={index}>{Object.entries(row).map(([key, value]) => <span key={key}><small>{key}</small>{value}</span>)}</div>)}</div>}</section>}
+          {structuredResult && <section className="panel-section query-section"><div className="section-heading"><div><span className="section-kicker">只读数据查询</span><h2>结构化结果</h2></div><ShieldCheck size={16} /></div>{structuredResult.sample_data ? <p className="query-sample">以下为内置样例数据，仅供演示，非实时业务数据。</p> : null}{structuredResult.blocked ? <p className="query-blocked">{structuredResult.reason}</p> : <div className="query-table">{structuredResult.rows.map((row, index) => <div className="query-row" key={index}>{Object.entries(row).map(([key, value]) => <span key={key}><small>{key}</small>{value}</span>)}</div>)}</div>}</section>}
 
           <div className="panel-footnote"><ShieldCheck size={14} /><span>{riskAssessed ? "回答经过规则安全审查" : "随对话整理健康线索"}<br />来源版本和查询范围可追溯</span></div>
         </aside>

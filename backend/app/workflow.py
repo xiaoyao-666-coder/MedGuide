@@ -534,8 +534,15 @@ class MedGuideWorkflow:
         for clause in patient_clauses:
             age_match = re.search(r"(?<!\d)(\d{1,3})\s*岁", clause)
             if age_match:
-                profile["age"] = int(age_match.group(1))
-                break
+                age = int(age_match.group(1))
+                # 120 is the established upper bound in this project (see
+                # _external_query_summary); an implausible age must not be
+                # stored, or it trips the elderly high-risk rule in
+                # SafetyEngine.screen. Keep looking: a later clause may
+                # carry a plausible age.
+                if 0 < age <= 120:
+                    profile["age"] = age
+                    break
         for clause in patient_clauses:
             duration = self._extract_duration(clause)
             if duration:

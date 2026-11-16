@@ -527,7 +527,9 @@ class ReadOnlySQLGuard:
                     cursor = conn.execute(validated, params)
                     rows = tuple(dict(row) for row in cursor.fetchall())
                     columns = tuple(column[0] for column in cursor.description or ())
-            return SQLQueryResult(intent, validated, params, columns, rows)
+            return SQLQueryResult(
+                intent, validated, params, columns, rows, sample_data=self.backend is None
+            )
         except Exception as exc:
             # Adapter/driver exceptions must not escape the API boundary.  Do
             # not return raw driver text because it can contain DSNs, table
