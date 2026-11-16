@@ -260,6 +260,7 @@ class MedGuideWorkflow:
                 compiled_result = dict(state)
                 completed: dict[str, dict[str, Any]] = {}
                 path: list[str] = []
+                node_started = time.perf_counter()
                 if hasattr(self.graph, "stream"):
                     for update in self.graph.stream(state, stream_mode="updates"):
                         for node, node_update in update.items():
@@ -273,11 +274,16 @@ class MedGuideWorkflow:
                                 "node": node,
                                 "label": NODE_LABELS[node],
                                 "status": "completed",
-                                "elapsed_ms": 0.0,
+                                # Time between node updates approximates the
+                                # node's own execution time on this path.
+                                "elapsed_ms": round((time.perf_counter() - node_started) * 1000, 2),
                             }
+                            node_started = time.perf_counter()
                 else:
                     # A small compatibility path keeps test doubles and older
                     # compiled graphs usable while production uses stream().
+                    # A single invoke() exposes no per-node boundary, so its
+                    # events keep elapsed_ms 0.0 instead of a fabricated split.
                     compiled_result.update(dict(self.graph.invoke(state)))
                     path = list(WORKFLOW_ORDER)
                     completed = {
@@ -760,6 +766,8 @@ class MedGuideWorkflow:
     def _format_rows(result: dict[str, Any]) -> str:
         rows = result.get("rows", [])
         lines = ["已通过只读白名单查询到以下数据："]
+        if len(rows) > 5:
+            lines.append(f"共 {len(rows)} 行，仅展示前 5 行：")
         for row in rows[:5]:
             lines.append(" · " + " / ".join(f"{key}: {value}" for key, value in row.items()))
         return "\n".join(lines) + "\n\n结果来自当前已连接的数据源；实际库存、排班和价格请以医院实时系统为准。"

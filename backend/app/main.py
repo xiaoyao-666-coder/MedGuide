@@ -489,9 +489,13 @@ def _cors_origins() -> list[str]:
     origins = [item.strip().rstrip("/") for item in raw.split(",") if item.strip()]
     # Credentials and wildcard origins are mutually exclusive.  Treat a
     # wildcard as an explicit configuration error rather than silently
-    # downgrading browser security.
+    # downgrading browser security: failing startup is the only honest
+    # signal, otherwise an operator would believe CORS is open.
     if "*" in origins:
-        return []
+        raise ValueError(
+            "MEDGUIDE_CORS_ORIGINS must not contain '*': wildcard origins cannot "
+            "be combined with credentials; list explicit origins instead."
+        )
     return origins
 
 

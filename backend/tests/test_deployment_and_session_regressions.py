@@ -33,8 +33,11 @@ def test_cors_defaults_to_same_origin_and_requires_explicit_allowlist(monkeypatc
         "https://admin.medguide.example",
     ]
 
+    # A wildcard must fail startup loudly instead of silently disabling
+    # CORS: an operator would otherwise believe cross-origin access is open.
     monkeypatch.setenv("MEDGUIDE_CORS_ORIGINS", "*")
-    assert main_module._cors_origins() == []
+    with pytest.raises(ValueError, match="must not contain"):
+        main_module._cors_origins()
 
 
 def test_production_requires_secure_cookie_and_https_pair(monkeypatch) -> None:

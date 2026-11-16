@@ -114,6 +114,34 @@ function apiFetch(path: string, init: RequestInit = {}) {
   return fetch(path, { ...init, credentials: "include" });
 }
 
+// Bounded fetch: without this a hung request (for example logout) waits
+// forever.  The caller's own signal is still honoured, and a timeout is
+// reported as a plain error rather than an AbortError so callers do not
+// mistake it for a user-initiated abort.  Chat generation streams, so it
+// gets a wider bound than the quick calls.
+const FETCH_TIMEOUT_MS = 30000;
+const CHAT_FETCH_TIMEOUT_MS = 120000;
+
+async function apiFetchTimed(path: string, init: RequestInit = {}, timeoutMs: number = FETCH_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  const onExternalAbort = () => controller.abort();
+  init.signal?.addEventListener("abort", onExternalAbort, { once: true });
+  try {
+    return await apiFetch(path, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (timedOut && isAbortError(error)) throw new Error("Request timed out");
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
+    init.signal?.removeEventListener("abort", onExternalAbort);
+  }
+}
+
 function createRequestId(prefix: string) {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return `${prefix}-${crypto.randomUUID()}`;
@@ -189,6 +217,9 @@ function formatHttpError(error: HttpResponseError) {
     case 404:
       return "当前会话已过期，请新建整理后重试。";
     case 409:
+      if (error.detail?.includes("已过期")) {
+        return "当前会话已过期，请新建整理后继续。";
+      }
       if (error.detail?.includes("请求上限") || error.detail?.includes("回放窗口")) {
         return "当前会话无法继续安全重放，请新建整理后继续。";
       }
@@ -250,7 +281,10 @@ function App() {
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(false);
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>("idle");
-  const [streaming, setStreaming] = useState(true);
+  // Streaming is always on: the JSON body is only a fallback when the
+  // server answers without an event stream.  There is no toggle for it,
+  // so this is a plain constant rather than unused state.
+  const streaming = true;
   const [events, setEvents] = useState<PipelineEvent[]>([]);
   const [citations, setCitations] = useState<Citation[]>([]);
   const [selectedCitationMessageId, setSelectedCitationMessageId] = useState<string | null>(null);
@@ -447,7 +481,7 @@ function App() {
     setAuthBootstrapError(null);
     void (async () => {
       try {
-        const response = await apiFetch("/api/auth/me", { signal: controller.signal });
+        const response = await apiFetchTimed("/api/auth/me", { signal: controller.signal });
         if (response.status === 401) {
           if (authRequestRef.current !== controller || controller.signal.aborted) return;
           setAuthUser(null);
@@ -476,7 +510,7 @@ function App() {
     setLogoutPending(true);
     setError(null);
     try {
-      const response = await apiFetch("/api/auth/logout", { method: "POST" });
+      const response = await apiFetchTimed("/api/auth/logout", { method: "POST" });
       if (response.status !== 401) await ensureResponseOk(response);
       returnToAuthentication("");
       setAuthBootstrapError(null);
@@ -564,7 +598,7 @@ function App() {
     sessionRequestRef.current = controller;
     void (async () => {
       try {
-        const response = await apiFetch("/api/sessions", {
+        const response = await apiFetchTimed("/api/sessions", {
           method: "POST",
           headers: apiHeaders({
             // The key lets a StrictMode effect replay resolve to one server session.
@@ -624,7 +658,7 @@ function App() {
     setLoading(true);
     setEvents([]);
     try {
-      const response = await apiFetch(`/api/chat?stream=${streaming}`, {
+      const response = await apiFetchTimed(`/api/chat?stream=${streaming}`, {
         method: "POST",
         headers: apiHeaders({
           "Content-Type": "application/json",
@@ -632,7 +666,7 @@ function App() {
         }),
         body: JSON.stringify({ session_id: sessionId, message: text, request_id: requestId }),
         signal: controller.signal,
-      });
+      }, CHAT_FETCH_TIMEOUT_MS);
       await ensureResponseOk(response);
       if (streaming && response.body && response.headers.get("content-type")?.includes("text/event-stream")) {
         const body = await consumeStream(response.body, generation, sessionId, controller);
@@ -648,12 +682,31 @@ function App() {
         returnToAuthentication("登录状态已过期，请重新登录。");
         return;
       }
+      // A reply for another session is a session problem, not a network
+      // problem: say so and keep the user's message instead of deleting it.
+      if (requestError instanceof Error && requestError.message.includes("invalid session identity")) {
+        setError("会话已变更，本次回答无法确认，请新建整理后重试。你的输入已保留。");
+        return;
+      }
       if (!(requestError instanceof HttpResponseError)) {
-        const recovered = await recoverCommittedResult(sessionId, requestId, controller);
-        if (recovered && requestIsCurrent(generation, controller, sessionId)) {
-          applyFinal(recovered, generation, sessionId, controller);
-          pendingRetryRef.current = null;
-          setError(null);
+        let recovered: RecoveryResult = { status: "unavailable" };
+        try {
+          recovered = await recoverCommittedResult(sessionId, requestId, controller);
+        } catch {
+          recovered = { status: "unavailable" };
+        }
+        if (recovered.status === "found" && requestIsCurrent(generation, controller, sessionId)) {
+          try {
+            applyFinal(recovered.body, generation, sessionId, controller);
+            pendingRetryRef.current = null;
+            setError(null);
+          } catch {
+            setError("会话已变更，本次回答无法恢复，请新建整理后重试。你的输入已保留。");
+          }
+          return;
+        }
+        if (recovered.status === "not-found") {
+          setError("本次回答未找到，会话可能已过期，请新建整理后重试。你的输入已保留。");
           return;
         }
       }
@@ -713,7 +766,11 @@ function App() {
       // A complete final frame is the application-level commit marker.  Do
       // not wait for the transport to close: the socket may drop after the
       // payload was received, and discarding it would create an orphaned turn.
-      if (finalPayload) return finalPayload;
+      // Release the reader first so the stream does not stay open.
+      if (finalPayload) {
+        await reader.cancel();
+        return finalPayload;
+      }
       if (done) break;
     }
     if (!finalPayload && requestIsCurrent(generation, controller, sessionId)) {
@@ -723,26 +780,34 @@ function App() {
     return finalPayload;
   }
 
+  // A recovery lookup distinguishes "the committed answer is gone" from
+  // "the network is down": only the first is a session problem, and the
+  // two must not be reported with the same message.
+  type RecoveryResult =
+    | { status: "found"; body: ChatResponseBody }
+    | { status: "not-found" }
+    | { status: "unavailable" };
+
   async function recoverCommittedResult(
     sessionId: string,
     requestId: string,
     controller: AbortController,
-  ): Promise<ChatResponseBody | null> {
+  ): Promise<RecoveryResult> {
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      if (controller.signal.aborted) return null;
+      if (controller.signal.aborted) return { status: "unavailable" };
       try {
-        const response = await apiFetch(
+        const response = await apiFetchTimed(
           `/api/sessions/${encodeURIComponent(sessionId)}/requests/${encodeURIComponent(requestId)}`,
           { headers: apiHeaders(), signal: controller.signal },
         );
-        if (response.ok) return (await response.json()) as ChatResponseBody;
-        if (response.status !== 404) return null;
+        if (response.ok) return { status: "found", body: (await response.json()) as ChatResponseBody };
+        if (response.status !== 404) return { status: "unavailable" };
       } catch (recoveryError) {
-        if (isAbortError(recoveryError)) return null;
+        if (isAbortError(recoveryError)) return { status: "unavailable" };
       }
       if (attempt < 2) await new Promise((resolve) => window.setTimeout(resolve, 120));
     }
-    return null;
+    return { status: "not-found" };
   }
 
   function applyFinal(body: ChatResponseBody, generation: number, sessionId: string, controller: AbortController) {
@@ -849,8 +914,6 @@ function App() {
     ? "服务不可用"
     : !session
       ? "建立安全会话"
-      : session.mode === "preview"
-        ? "示例会话"
       : session.network_enabled === false
         ? "知识服务受限"
         : "整理服务在线";
@@ -886,7 +949,7 @@ function App() {
         <div className="topbar-meta">
           <span className={`service-status ${sessionStatus === "error" ? "unavailable" : !session ? "pending" : ""}`} role="status"><span className="status-dot" />{serviceStatusLabel}</span>
           <div className="account-cluster">
-            <span className="account-identity"><UserRound size={15} /><span className="account-name">{authUser.username}</span></span>
+            <span className="account-identity"><UserRound size={15} /><span className="account-name" title={authUser.username}>{authUser.username}</span></span>
             <button className="logout-button" onClick={() => void logout()} disabled={logoutPending} aria-label="退出登录" title="退出登录">
               <LogOut size={15} /><span>{logoutPending ? "退出中" : "退出"}</span>
             </button>
@@ -974,7 +1037,7 @@ function App() {
               <p className="welcome-description">可以从哪里不舒服、持续多久开始。用药或检查方面的疑问，也可以直接提问。</p>
               <QuestionStarters disabled={loading} onChoose={chooseStarter} />
               <div className="welcome-note"><NotebookPen size={15} /><span>先从一个具体问题开始，信息会随着对话逐步补齐。</span></div>
-            </section> : <div className="message-date"><span />{formatDateDivider(messages[0]?.timestamp ?? Date.now())}<span /></div>}
+            </section> : <div className="message-date"><span />{formatDateDivider(messages.find((message) => message.role === "user")?.timestamp ?? messages[0]?.timestamp ?? Date.now())}<span /></div>}
             {(!isWelcome ? messages : []).map((message) => (
               <article className={`message-row ${message.role}`} key={message.id}>
                 {message.role === "assistant" && <div className="message-avatar assistant-avatar"><Activity size={16} /></div>}
@@ -1043,12 +1106,12 @@ function App() {
           {referenceCitations.some((citation) => citation.source.includes("OGL-3.0")) && <p className="content-license">部分资料为项目中文改编，未经原机构审核。<br />Contains public sector information licensed under the <a href="https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/" target="_blank" rel="noreferrer">Open Government Licence v3.0</a>.</p>}
 
 
-          {structuredResult && <section className="panel-section query-section"><div className="section-heading"><div><span className="section-kicker">只读数据查询</span><h2>结构化结果</h2></div><ShieldCheck size={16} /></div>{structuredResult.blocked ? <p className="query-blocked">{structuredResult.reason}</p> : <div className="query-table">{structuredResult.rows.map((row, index) => <div className="query-row" key={index}>{Object.entries(row).map(([key, value]) => <span key={key}><small>{key}</small>{value}</span>)}</div>)}</div>}</section>}
+          {structuredResult && <section className="panel-section query-section"><div className="section-heading"><div><span className="section-kicker">只读数据查询</span><h2>结构化结果</h2></div><ShieldCheck size={16} /></div>{structuredResult.blocked ? <p className="query-blocked">{structuredResult.reason}</p> : structuredResult.rows.length === 0 ? <div className="query-empty"><p>无匹配结果</p>{structuredResult.columns?.length ? <p>查询字段：{structuredResult.columns.join("、")}</p> : null}{structuredResult.sql ? <p className="query-sql">查询语句：{structuredResult.sql}</p> : null}</div> : <div className="query-table">{structuredResult.rows.map((row, index) => <div className="query-row" key={index}>{Object.entries(row).map(([key, value]) => <span key={key}><small>{key}</small>{value}</span>)}</div>)}</div>}</section>}
 
           <div className="panel-footnote"><ShieldCheck size={14} /><span>{riskAssessed ? "回答经过规则安全审查" : "随对话整理健康线索"}<br />来源版本和查询范围可追溯</span></div>
         </aside>
       </div>
-      {error && <div className="toast" role="status"><Info size={15} />{error}<button onClick={() => setError(null)} aria-label="关闭提示"><X size={14} /></button></div>}
+      {error && <div className="toast" role="alert"><Info size={15} />{error}<button onClick={() => setError(null)} aria-label="关闭提示"><X size={14} /></button></div>}
     </div>
   );
 }
@@ -1101,7 +1164,7 @@ function AuthScreen({ status, bootstrapError, onAuthenticated, onRetryConnection
     setPending(true);
     setFormError(null);
     try {
-      const response = await apiFetch(`/api/auth/${mode}`, {
+      const response = await apiFetchTimed(`/api/auth/${mode}`, {
         method: "POST",
         headers: apiHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ username: validation.username, password }),

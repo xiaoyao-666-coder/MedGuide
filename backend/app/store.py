@@ -381,6 +381,6 @@ class SessionStore:
             "answer_source": state.get("answer_source"),
             "safety_blocked": bool(state.get("safety_blocked", False)),
             "environment": self.mode if self.mode in {"offline", "test", "local"} else "production",
-            "network_enabled": self.mode not in {"offline", "test"},
+            "network_enabled": self.mode not in {"offline", "test", "local"},
             "updated_at": state.get("updated_at"),
         }

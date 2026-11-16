@@ -603,7 +603,14 @@ class ReadOnlySQLGuard:
 
     @staticmethod
     def _extract_department(text: str) -> str:
-        for department in ("呼吸内科", "消化内科", "全科医学科", "心内科", "皮肤科"):
+        # Common hospital departments.  The sample schedules only carry a
+        # few of them; an unknown department still returns no rows rather
+        # than a misleading "please specify" block.
+        for department in (
+            "呼吸内科", "消化内科", "全科医学科", "心内科", "皮肤科",
+            "眼科", "耳鼻喉科", "口腔科", "骨科", "神经内科", "神经外科",
+            "儿科", "妇产科", "泌尿外科",
+        ):
             if department in text:
                 return department
         return ""

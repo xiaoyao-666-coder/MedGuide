@@ -32,14 +32,25 @@ class IntentRouter:
         "structured": ("库存", "有货", "排班", "号源", "价格", "多少钱", "费用"),
     }
 
+    # Score ties are broken by an explicit priority instead of dict order:
+    # an explicit "which department" question wins over a bare symptom
+    # mention ("咳嗽三天应该挂什么科？" is a department question), while a
+    # symptom plus a drug mention ("发热吃药") stays a disease question.
+    _INTENT_PRIORITY: tuple[Intent, ...] = ("department", "disease", "drug", "exam", "faq")
+
     def classify(self, text: str) -> Intent:
         normalized = text.lower()
         structured = sum(1 for word in self.KEYWORDS["structured"] if word in normalized)
         if structured and any(word in normalized for word in ("库存", "有货", "排班", "号源", "价格", "多少钱", "费用")):
             return "structured"
         scores = {intent: sum(1 for word in words if word in normalized) for intent, words in self.KEYWORDS.items() if intent != "structured"}
-        best = max(scores, key=scores.get)
-        return best if scores[best] else "unknown"
+        best: Intent = "unknown"
+        best_score = 0
+        for intent in self._INTENT_PRIORITY:
+            if scores[intent] > best_score:
+                best = intent
+                best_score = scores[intent]
+        return best if best_score else "unknown"
 
     def rewrite(self, text: str, profile: PatientProfile | None = None) -> str:
         profile = profile or {}
@@ -351,14 +362,15 @@ class HybridRetriever:
             if self.milvus is not None and getattr(self.milvus, "ready", False)
             else ("milvus-unavailable" if self.remote_required else "disabled")
         )
-        provider_name = str(getattr(self.embedding_provider.spec, "provider", ""))
         indexed_chunks = self.bm25_index.chunks if self.bm25_index is not None else []
         return {
             "documents": len({chunk.document_id for chunk in indexed_chunks}),
             "chunks": len(indexed_chunks),
             "vector_store": vector_store,
             "keyword_store": "bm25" if self.bm25_index is not None else "bm25-unavailable",
-            "embedding_model": self.embedding_provider.spec.model if provider_name != "local" else "not-configured",
+            # The local hash provider is a real, working provider; report its
+            # model instead of claiming the embedding is not configured.
+            "embedding_model": self.embedding_provider.spec.model,
             "embedding_version": self.embedding_provider.spec.version,
         }
 
