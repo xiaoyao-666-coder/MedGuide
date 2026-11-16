@@ -1,8 +1,15 @@
-import { FormEvent, KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent as ReactKeyboardEvent, useEffect, useReducer, useRef, useState } from "react";
 import { PASSWORD_INPUT_MAX_LENGTH, USERNAME_INPUT_MAX_LENGTH, validateAuthCredentials } from "./auth-validation";
 import { safeCitationSourceUrl } from "./source-url";
 import { QuestionStarters } from "./QuestionStarters";
 import { buildWorkflowStages, mergePipelineEvent, responsePipelineEvents, type PipelineEvent } from "./workflow-progress";
+import {
+  FEEDBACK_COMMENT_MAX_LENGTH,
+  buildFeedbackRequestBody,
+  feedbackCommentError,
+  feedbackCommentReducer,
+  initialFeedbackCommentState,
+} from "./feedback-comment";
 import {
   Activity,
   AlertTriangle,
@@ -256,9 +263,11 @@ function App() {
   const [selectedCitationMessageId, setSelectedCitationMessageId] = useState<string | null>(null);
   const [structuredResult, setStructuredResult] = useState<StructuredResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [mobilePanel, setMobilePanel] = useState<"left" | "right" | null>(null);
   const [feedbackSent, setFeedbackSent] = useState<Record<string, "up" | "down">>({});
   const [feedbackPending, setFeedbackPending] = useState<Record<string, boolean>>({});
+  const [feedbackComment, dispatchFeedbackComment] = useReducer(feedbackCommentReducer, initialFeedbackCommentState);
   const bottomRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const generationRef = useRef(0);
@@ -414,6 +423,8 @@ function App() {
     setStructuredResult(null);
     setFeedbackSent({});
     setFeedbackPending({});
+    dispatchFeedbackComment({ type: "reset" });
+    setNotice(null);
     setMobilePanel(null);
   }
 
@@ -784,6 +795,8 @@ function App() {
     setEvents([]);
     setFeedbackSent({});
     setFeedbackPending({});
+    dispatchFeedbackComment({ type: "reset" });
+    setNotice(null);
     committedResponseIdsRef.current.clear();
     restoreFocusRef.current = null;
     closeMobilePanel();
@@ -791,10 +804,26 @@ function App() {
     startSession(sessionCreateKeyRef.current);
   }
 
-  async function sendFeedback(messageId: string, rating: "up" | "down") {
+  // A downvote opens the comment box first; the vote itself is only sent
+  // when the user submits from the box (an empty comment submits a plain
+  // downvote, exactly like the old one-click behaviour). An upvote stays
+  // one click and never asks for text.
+  function openFeedbackComment(messageId: string) {
+    if (feedbackSent[messageId] || feedbackPending[messageId]) return;
+    dispatchFeedbackComment({ type: "open", messageId });
+  }
+
+  async function sendFeedback(messageId: string, rating: "up" | "down", comment?: string) {
     const message = messages.find((item) => item.id === messageId);
     const sessionId = message?.sessionId || activeSessionIdRef.current;
     if (!sessionId || feedbackSent[messageId] || feedbackPending[messageId]) return;
+    if (rating === "down") {
+      const commentProblem = feedbackCommentError(comment ?? "");
+      if (commentProblem) {
+        setError(commentProblem);
+        return;
+      }
+    }
     const generation = generationRef.current;
     setFeedbackPending((current) => ({ ...current, [messageId]: true }));
     try {
@@ -805,11 +834,16 @@ function App() {
           // Retried clicks for one answer/rating must remain one metric event.
           "Idempotency-Key": `${sessionId}:${messageId}:${rating}`,
         }),
-        body: JSON.stringify({ session_id: sessionId, message_id: messageId, rating }),
+        body: JSON.stringify(buildFeedbackRequestBody({ sessionId, messageId, rating, comment })),
       });
       await ensureResponseOk(response);
       if (generationRef.current === generation) {
         setFeedbackSent((current) => ({ ...current, [messageId]: rating }));
+        if (rating === "down") {
+          dispatchFeedbackComment({ type: "submitted", messageId });
+          setError(null);
+          setNotice("反馈已提交，谢谢你的补充。");
+        }
       }
     } catch (requestError) {
       if (generationRef.current === generation) {
@@ -817,6 +851,9 @@ function App() {
           returnToAuthentication("登录状态已过期，请重新登录。");
           return;
         }
+        // The comment box stays open with the draft kept, so a failed
+        // submit does not make the user retype.
+        setNotice(null);
         setError(requestError instanceof HttpResponseError
           ? `反馈提交失败：${formatHttpError(requestError)}`
           : "反馈提交失败，请稍后重试。");
@@ -985,7 +1022,30 @@ function App() {
                     <button type="button" className="inline-citations" onClick={(event) => showReferences(event.currentTarget, message.id)}><BookOpen size={14} /><span>查看 {message.citations.length} 条参考资料</span><ArrowUpRight size={13} /></button>
                   )}
                   {message.role === "assistant" && message.latency !== undefined && <div className="message-latency"><Clock3 size={12} />响应 {Math.round(message.latency)} ms</div>}
-                  {message.role === "assistant" && message.id !== "welcome" && <div className="message-feedback"><span>这条回答有帮助吗？</span><button className={feedbackSent[message.id] === "up" ? "selected" : ""} onClick={() => void sendFeedback(message.id, "up")} disabled={feedbackPending[message.id]} aria-label="回答有帮助" title="回答有帮助"><ThumbsUp size={13} /></button><button className={feedbackSent[message.id] === "down" ? "selected" : ""} onClick={() => void sendFeedback(message.id, "down")} disabled={feedbackPending[message.id]} aria-label="回答需要改进" title="回答需要改进"><ThumbsDown size={13} /></button></div>}
+                  {message.role === "assistant" && message.id !== "welcome" && <div className="message-feedback"><span>这条回答有帮助吗？</span><button className={feedbackSent[message.id] === "up" ? "selected" : ""} onClick={() => void sendFeedback(message.id, "up")} disabled={feedbackPending[message.id]} aria-label="回答有帮助" title="回答有帮助"><ThumbsUp size={13} /></button><button className={feedbackSent[message.id] === "down" ? "selected" : ""} onClick={() => openFeedbackComment(message.id)} disabled={feedbackPending[message.id]} aria-label="回答需要改进" title="回答需要改进"><ThumbsDown size={13} /></button></div>}
+                  {message.role === "assistant" && message.id !== "welcome" && feedbackComment.openMessageId === message.id && (
+                    <div className="feedback-comment-box">
+                      <label htmlFor={`feedback-comment-${message.id}`}>哪里需要改进？写下来帮我们做得更好（可选，不写也可以直接提交）。</label>
+                      <textarea
+                        id={`feedback-comment-${message.id}`}
+                        value={feedbackComment.drafts[message.id] ?? ""}
+                        onChange={(event) => dispatchFeedbackComment({ type: "draft", messageId: message.id, text: event.target.value })}
+                        rows={2}
+                        maxLength={FEEDBACK_COMMENT_MAX_LENGTH}
+                        placeholder="例如：回答没有说清楚这种情况要不要去医院…"
+                        aria-label="补充说明这条回答哪里需要改进"
+                        disabled={feedbackPending[message.id]}
+                        autoFocus
+                      />
+                      <div className="feedback-comment-footer">
+                        <span>{(feedbackComment.drafts[message.id] ?? "").length}/{FEEDBACK_COMMENT_MAX_LENGTH} 字</span>
+                        <div className="feedback-comment-actions">
+                          <button type="button" className="feedback-comment-cancel" onClick={() => dispatchFeedbackComment({ type: "close", messageId: message.id })} disabled={feedbackPending[message.id]}>取消</button>
+                          <button type="button" className="feedback-comment-submit" onClick={() => void sendFeedback(message.id, "down", feedbackComment.drafts[message.id] ?? "")} disabled={feedbackPending[message.id]}>提交反馈</button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </article>
             ))}
@@ -1048,7 +1108,7 @@ function App() {
           <div className="panel-footnote"><ShieldCheck size={14} /><span>{riskAssessed ? "回答经过规则安全审查" : "随对话整理健康线索"}<br />来源版本和查询范围可追溯</span></div>
         </aside>
       </div>
-      {error && <div className="toast" role="status"><Info size={15} />{error}<button onClick={() => setError(null)} aria-label="关闭提示"><X size={14} /></button></div>}
+      {error ? <div className="toast" role="status"><Info size={15} />{error}<button onClick={() => setError(null)} aria-label="关闭提示"><X size={14} /></button></div> : notice ? <div className="toast toast-success" role="status"><Check size={15} />{notice}<button onClick={() => setNotice(null)} aria-label="关闭提示"><X size={14} /></button></div> : null}
     </div>
   );
 }
