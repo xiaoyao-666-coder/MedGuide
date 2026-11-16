@@ -210,7 +210,7 @@ button.starter-prompt:hover:not(:disabled) { border-color:#a1cbd0; background:#f
 .message-latency { display:flex; align-items:center; gap:5px; margin-top:4px; color:var(--ink-500); font-size:11px; }
 .message-feedback { display:flex; align-items:center; gap:6px; margin-top:8px; color:var(--ink-500); font-size:11px; }
 .message-feedback button { display:grid; place-items:center; width:32px; height:32px; padding:0; color:var(--ink-500); background:transparent; border:1px solid transparent; border-radius:6px; }
-.message-feedback button:hover,.message-feedback button.selected { color:var(--teal-800); background:var(--teal-050); border-color:#cfe5e7; }
+.message-feedback button:hover,.message-feedback button.selected,.message-feedback button.copied { color:var(--teal-800); background:var(--teal-050); border-color:#cfe5e7; }
 .loading-bubble { display:flex; gap:5px; width:66px; padding:17px 18px; background:var(--teal-050); border:1px solid #d5e8ea; border-radius:8px; }
 .loading-bubble span { width:5px; height:5px; background:var(--teal-700); border-radius:50%; animation:pulse 1.4s ease-in-out infinite; }
 .loading-bubble span:nth-child(2) { animation-delay:.15s; }
@@ -276,7 +276,7 @@ button.starter-prompt:hover:not(:disabled) { border-color:#a1cbd0; background:#f
 .pipeline-index { display:grid; place-items:center; flex-shrink:0; width:22px; height:22px; color:var(--ink-500); font-size:11px; border:1px solid var(--line-strong); border-radius:6px; transition:color var(--motion-fast),background-color var(--motion-base),border-color var(--motion-base); }
 .pipeline-item.completed { color:var(--ink-700); }
 .pipeline-item.completed .pipeline-index { color:var(--teal-800); background:var(--teal-100); border-color:#b8dadd; }
-.pipeline-item.completed .pipeline-index svg,.message-feedback button.selected svg { animation:control-ready var(--motion-base) var(--ease-out); }
+.pipeline-item.completed .pipeline-index svg,.message-feedback button.selected svg,.message-feedback button.copied svg { animation:control-ready var(--motion-base) var(--ease-out); }
 .pipeline-item.running { color:var(--teal-800); }
 .pipeline-item.running .pipeline-index { color:var(--teal-800); border-color:var(--teal-700); }
 .pipeline-state { flex-shrink:0; margin-left:auto; color:var(--ink-500); font-size:11px; white-space:nowrap; }

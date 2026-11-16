@@ -1,5 +1,6 @@
 import { FormEvent, KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState } from "react";
 import { PASSWORD_INPUT_MAX_LENGTH, USERNAME_INPUT_MAX_LENGTH, validateAuthCredentials } from "./auth-validation";
+import { copyAnswerText } from "./copy-text";
 import { safeCitationSourceUrl } from "./source-url";
 import { QuestionStarters } from "./QuestionStarters";
 import { buildWorkflowStages, mergePipelineEvent, responsePipelineEvents, type PipelineEvent } from "./workflow-progress";
@@ -11,6 +12,7 @@ import {
   BookOpen,
   Check,
   Clock3,
+  Copy,
   Eye,
   EyeOff,
   HeartPulse,
@@ -259,6 +261,8 @@ function App() {
   const [mobilePanel, setMobilePanel] = useState<"left" | "right" | null>(null);
   const [feedbackSent, setFeedbackSent] = useState<Record<string, "up" | "down">>({});
   const [feedbackPending, setFeedbackPending] = useState<Record<string, boolean>>({});
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const generationRef = useRef(0);
@@ -275,6 +279,8 @@ function App() {
   const rightPanelRef = useRef<HTMLElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const closeTimerRef = useRef<number | null>(null);
+  const copyTimerRef = useRef<number | null>(null);
+  const noticeTimerRef = useRef<number | null>(null);
   const authRequestRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -784,11 +790,55 @@ function App() {
     setEvents([]);
     setFeedbackSent({});
     setFeedbackPending({});
+    setCopiedMessageId(null);
+    setNotice(null);
+    if (copyTimerRef.current !== null) {
+      window.clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = null;
+    }
+    if (noticeTimerRef.current !== null) {
+      window.clearTimeout(noticeTimerRef.current);
+      noticeTimerRef.current = null;
+    }
     committedResponseIdsRef.current.clear();
     restoreFocusRef.current = null;
     closeMobilePanel();
     sessionCreateKeyRef.current = createRequestId("session");
     startSession(sessionCreateKeyRef.current);
+  }
+
+  function showNotice(text: string) {
+    if (noticeTimerRef.current !== null) {
+      window.clearTimeout(noticeTimerRef.current);
+    }
+    setNotice(text);
+    noticeTimerRef.current = window.setTimeout(() => {
+      noticeTimerRef.current = null;
+      setNotice(null);
+    }, 3000);
+  }
+
+  async function copyAnswer(messageId: string) {
+    const message = messages.find((item) => item.id === messageId);
+    if (!message) return;
+    const result = await copyAnswerText(message.content);
+    if (result.ok) {
+      if (copyTimerRef.current !== null) {
+        window.clearTimeout(copyTimerRef.current);
+      }
+      setCopiedMessageId(messageId);
+      copyTimerRef.current = window.setTimeout(() => {
+        copyTimerRef.current = null;
+        setCopiedMessageId((current) => (current === messageId ? null : current));
+      }, 2000);
+      showNotice("回答已复制到剪贴板。");
+      return;
+    }
+    setError(
+      result.reason === "unavailable"
+        ? "当前浏览器不支持复制，请手动选中回答内容复制。"
+        : "复制失败，请检查浏览器剪贴板权限后重试。",
+    );
   }
 
   async function sendFeedback(messageId: string, rating: "up" | "down") {
@@ -985,7 +1035,7 @@ function App() {
                     <button type="button" className="inline-citations" onClick={(event) => showReferences(event.currentTarget, message.id)}><BookOpen size={14} /><span>查看 {message.citations.length} 条参考资料</span><ArrowUpRight size={13} /></button>
                   )}
                   {message.role === "assistant" && message.latency !== undefined && <div className="message-latency"><Clock3 size={12} />响应 {Math.round(message.latency)} ms</div>}
-                  {message.role === "assistant" && message.id !== "welcome" && <div className="message-feedback"><span>这条回答有帮助吗？</span><button className={feedbackSent[message.id] === "up" ? "selected" : ""} onClick={() => void sendFeedback(message.id, "up")} disabled={feedbackPending[message.id]} aria-label="回答有帮助" title="回答有帮助"><ThumbsUp size={13} /></button><button className={feedbackSent[message.id] === "down" ? "selected" : ""} onClick={() => void sendFeedback(message.id, "down")} disabled={feedbackPending[message.id]} aria-label="回答需要改进" title="回答需要改进"><ThumbsDown size={13} /></button></div>}
+                  {message.role === "assistant" && message.id !== "welcome" && <div className="message-feedback"><span>这条回答有帮助吗？</span><button className={feedbackSent[message.id] === "up" ? "selected" : ""} onClick={() => void sendFeedback(message.id, "up")} disabled={feedbackPending[message.id]} aria-label="回答有帮助" title="回答有帮助"><ThumbsUp size={13} /></button><button className={feedbackSent[message.id] === "down" ? "selected" : ""} onClick={() => void sendFeedback(message.id, "down")} disabled={feedbackPending[message.id]} aria-label="回答需要改进" title="回答需要改进"><ThumbsDown size={13} /></button><button className={copiedMessageId === message.id ? "copied" : ""} onClick={() => void copyAnswer(message.id)} aria-label={copiedMessageId === message.id ? "已复制回答" : "复制回答"} title={copiedMessageId === message.id ? "已复制" : "复制回答"}>{copiedMessageId === message.id ? <Check size={13} /> : <Copy size={13} />}</button></div>}
                 </div>
               </article>
             ))}
@@ -1048,7 +1098,7 @@ function App() {
           <div className="panel-footnote"><ShieldCheck size={14} /><span>{riskAssessed ? "回答经过规则安全审查" : "随对话整理健康线索"}<br />来源版本和查询范围可追溯</span></div>
         </aside>
       </div>
-      {error && <div className="toast" role="status"><Info size={15} />{error}<button onClick={() => setError(null)} aria-label="关闭提示"><X size={14} /></button></div>}
+      {(error || notice) && <div className="toast" role="status"><Info size={15} />{error ?? notice}<button onClick={() => { setError(null); setNotice(null); }} aria-label="关闭提示"><X size={14} /></button></div>}
     </div>
   );
 }
