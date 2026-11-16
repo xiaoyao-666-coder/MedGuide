@@ -12,6 +12,7 @@ class PatientProfile(TypedDict, total=False):
     age: int
     sex: str
     duration: str
+    temperature: str
     symptoms: list[str]
     associated_symptoms: list[str]
     history: str
