@@ -33,6 +33,7 @@ from .embeddings import embedding_provider_from_env, keyword_embedding_provider_
 from .ingestion import MedicalDocumentCleaner
 from .infra import AdapterStatus, MySQLReadOnlyAdapter, RedisSessionAdapter
 from .llm import OpenAIAnswerer
+from .login_lockout import LoginAttemptLimiter
 from .metrics import MetricsStore
 from .models import WorkflowState
 from .retrieval import HybridRetriever, MilvusAdapter
@@ -260,6 +261,10 @@ class AppServices:
         )
         self.api_tokens = _configured_api_tokens()
         self.auth = AuthStore.from_environment(production=production, local=self.local)
+        # In-memory failed-login limiter (issue #23). The API runs as a
+        # single uvicorn worker, so per-process state covers the deployment;
+        # lockout state is lost on restart by design.
+        self.login_limiter = LoginAttemptLimiter()
         self.embedding_provider = (
             keyword_embedding_provider_from_env()
             if self.knowledge_backend == "bm25"
@@ -958,11 +963,66 @@ def register(credentials: AuthCredentials, response: Response, http_request: Req
     return AuthUserResponse(username=username)
 
 
+def _login_limiter(current: AppServices) -> LoginAttemptLimiter:
+    limiter = getattr(current, "login_limiter", None)
+    if limiter is None:
+        # Test doubles build their own services namespace without a
+        # limiter; bind one lazily so each services object still gets
+        # isolated lockout state instead of sharing a global.
+        limiter = LoginAttemptLimiter()
+        current.login_limiter = limiter
+    return limiter
+
+
+def _login_client_ip(current: AppServices, request: Request) -> str:
+    """Best-effort client IP for login rate limiting.
+
+    The API sits behind the Caddy gateway and the UI nginx, both of which
+    append the real client address to X-Forwarded-For, so the leftmost
+    entry is the browser IP -- but only when the direct peer is a trusted
+    proxy (the same trust boundary the HTTPS gate uses). Otherwise the
+    direct peer is used, so a client cannot spoof its way out of (or
+    into) the per-IP bucket with a forged header.
+    """
+    client_host = request.client.host if request.client is not None else ""
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if not forwarded:
+        return client_host
+    first = forwarded.split(",", 1)[0].strip()
+    if not first:
+        return client_host
+    try:
+        direct_ip = ipaddress.ip_address(client_host)
+    except ValueError:
+        return client_host
+    networks = getattr(current, "trusted_proxy_networks", None)
+    if networks is None:
+        networks = _trusted_proxy_networks()
+    if not any(direct_ip in network for network in networks):
+        return client_host
+    try:
+        ipaddress.ip_address(first)
+    except ValueError:
+        return client_host
+    return first
+
+
 @app.post("/api/auth/login", response_model=AuthUserResponse)
 def login(credentials: AuthCredentials, response: Response, http_request: Request) -> AuthUserResponse:
     current = get_services()
     _require_secure_transport(current, http_request)
     _require_auth_backend(current)
+    limiter = _login_limiter(current)
+    client_ip = _login_client_ip(current, http_request)
+    locked_for = limiter.locked_for_seconds(credentials.username, client_ip)
+    if locked_for is not None:
+        # Same generic message for known and unknown accounts, so the
+        # lockout itself reveals nothing about account existence.
+        raise HTTPException(
+            status_code=429,
+            detail="登录尝试过于频繁，请稍后再试",
+            headers={"Retry-After": str(math.ceil(locked_for))},
+        )
     try:
         username = current.auth.verify_credentials(
             credentials.username,
@@ -970,10 +1030,16 @@ def login(credentials: AuthCredentials, response: Response, http_request: Reques
         )
         token, _expires_at = current.auth.create_session(username)
     except InvalidCredentialsError as exc:
+        # Unknown usernames are counted exactly like known ones, and
+        # verify_credentials already runs the full PBKDF2 derivation
+        # against a dummy hash for them, so failure timing does not leak
+        # account existence either.
+        limiter.record_failure(credentials.username, client_ip)
         raise HTTPException(status_code=401, detail="用户名或密码错误") from exc
     except Exception as exc:
         logger.warning("Authentication login failed: %s", type(exc).__name__)
         raise HTTPException(status_code=503, detail="共享认证服务暂时不可用，请稍后重试") from exc
+    limiter.record_success(username)
     previous_token = http_request.cookies.get(current.auth.cookie_name)
     if previous_token:
         current.auth.revoke_session(previous_token)
