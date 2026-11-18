@@ -13,9 +13,13 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from app.main import app
+from conftest import login_client
 
 
 def _new_session(client: TestClient) -> str:
+    # Issue #6: protected APIs require a login in every mode, including
+    # test mode, so create a session only after logging in.
+    login_client(client, "request_id_lock_user")
     session_id = client.post("/api/sessions").json()["session_id"]
     assert session_id
     return session_id
