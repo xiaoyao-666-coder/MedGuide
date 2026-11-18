@@ -17,6 +17,7 @@ from app.retrieval import HybridRetriever
 from app.safety import SafetyEngine
 from app.sql_guard import ReadOnlySQLGuard
 from app.workflow import MedGuideWorkflow
+from conftest import login_client
 
 
 def _workflow() -> MedGuideWorkflow:
@@ -119,6 +120,10 @@ def test_create_session_for_registered_user_still_works(auth_store) -> None:
 # 6d: /api/query exposes SQL; sample rows are indistinguishable from live data.
 def test_api_query_response_has_no_sql_and_labels_sample_data() -> None:
     with TestClient(app, base_url="https://testserver") as client:
+        # Issue #6: /api/query requires a session in every mode, so this
+        # 6d response-shape check must log in first (same as the other
+        # API tests); the assertions below are unchanged.
+        login_client(client, "validation_exposure_user")
         response = client.post("/api/query", json={"text": "查询布洛芬库存"})
     assert response.status_code == 200
     body = response.json()
