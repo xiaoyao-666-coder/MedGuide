@@ -52,6 +52,8 @@ def _chat(client: TestClient, session_id: str, message: str, request_id: str):
 
 
 def test_multi_turn_messages_persist_and_restore_via_get(client: TestClient) -> None:
+    # Issue #6 requires a session for /api/sessions in every mode.
+    _register(client, "history_multi_turn")
     session_id = client.post("/api/sessions").json()["session_id"]
     first = _chat(client, session_id, "我32岁，咳嗽持续3天", "turn-history-0001")
     second = _chat(client, session_id, "还伴随发热38度", "turn-history-0002")
@@ -113,6 +115,8 @@ def test_cross_user_session_read_returns_404(client: TestClient) -> None:
 
 
 def test_idempotent_replay_does_not_duplicate_messages(client: TestClient) -> None:
+    # Issue #6 requires a session for /api/sessions in every mode.
+    _register(client, "history_replay")
     session_id = client.post("/api/sessions").json()["session_id"]
     request = {
         "session_id": session_id,
