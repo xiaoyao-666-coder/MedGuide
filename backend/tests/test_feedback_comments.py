@@ -19,8 +19,19 @@ from app.auth import AuthStore
 from app.main import app
 from app.metrics import MetricsStore
 from app.store import SessionStore
+from conftest import login_client
 
 PASSWORD = "Correct-Horse-42"
+
+# Issue #6: the feedback endpoints require an authenticated session, so
+# tests that seed a session directly must log in as its owner first.
+COMMENT_USER = "comment_user"
+
+
+def _login(client) -> None:
+    assert client.post(
+        "/api/auth/register", json={"username": COMMENT_USER, "password": PASSWORD}
+    ).status_code == 201
 
 
 def _services(tmp_path):
@@ -67,9 +78,10 @@ def _post_feedback(client, session_id, message_id, rating, comment=None):
 
 
 def test_submit_comment_then_read_back(services) -> None:
-    state = _seed_session(services)
+    state = _seed_session(services, owner_id=f"user:{COMMENT_USER}")
     session_id = state["session_id"]
     with _client() as client:
+        _login(client)
         posted = _post_feedback(client, session_id, "resp-1", "up", "回答很清楚，谢谢")
         assert posted.status_code == 200
         assert posted.json()["changed"] is True
@@ -94,9 +106,10 @@ def test_submit_comment_then_read_back(services) -> None:
 
 
 def test_same_rating_new_comment_is_change_and_updates_text(services) -> None:
-    state = _seed_session(services)
+    state = _seed_session(services, owner_id=f"user:{COMMENT_USER}")
     session_id = state["session_id"]
     with _client() as client:
+        _login(client)
         assert _post_feedback(client, session_id, "resp-1", "up", "第一版评价").json()["changed"] is True
         second = _post_feedback(client, session_id, "resp-1", "up", "补充一点：希望更简短")
         assert second.status_code == 200
@@ -110,9 +123,10 @@ def test_same_rating_new_comment_is_change_and_updates_text(services) -> None:
 
 
 def test_same_rating_same_comment_is_not_change(services) -> None:
-    state = _seed_session(services)
+    state = _seed_session(services, owner_id=f"user:{COMMENT_USER}")
     session_id = state["session_id"]
     with _client() as client:
+        _login(client)
         assert _post_feedback(client, session_id, "resp-1", "up", "很好").json()["changed"] is True
         again = _post_feedback(client, session_id, "resp-1", "up", "很好")
         assert again.json()["changed"] is False
@@ -120,9 +134,10 @@ def test_same_rating_same_comment_is_not_change(services) -> None:
 
 
 def test_rating_change_keeps_comment(services) -> None:
-    state = _seed_session(services)
+    state = _seed_session(services, owner_id=f"user:{COMMENT_USER}")
     session_id = state["session_id"]
     with _client() as client:
+        _login(client)
         _post_feedback(client, session_id, "resp-1", "up", "一开始觉得有用")
         changed = _post_feedback(client, session_id, "resp-1", "down")
         assert changed.json()["changed"] is True
@@ -135,9 +150,10 @@ def test_rating_change_keeps_comment(services) -> None:
 
 
 def test_blank_comment_is_not_stored_or_counted(services) -> None:
-    state = _seed_session(services)
+    state = _seed_session(services, owner_id=f"user:{COMMENT_USER}")
     session_id = state["session_id"]
     with _client() as client:
+        _login(client)
         for blank in ("", "   ", "\n\t "):
             response = _post_feedback(client, session_id, "resp-1", "up", blank)
             assert response.status_code == 200
@@ -153,8 +169,9 @@ def test_blank_comment_is_not_stored_or_counted(services) -> None:
 
 
 def test_comment_over_500_chars_is_rejected(services) -> None:
-    state = _seed_session(services)
+    state = _seed_session(services, owner_id=f"user:{COMMENT_USER}")
     with _client() as client:
+        _login(client)
         response = _post_feedback(client, state["session_id"], "resp-1", "up", "x" * 501)
         assert response.status_code == 422
         assert client.get("/api/feedback/comments").json() == {"comments": [], "count": 0}
@@ -207,6 +224,8 @@ def test_comments_are_scoped_to_owner(services) -> None:
 def test_end_to_end_chat_feedback_comment_read_back() -> None:
     """Real app wiring: chat -> feedback with comment -> read it back."""
     with TestClient(app, base_url="https://testserver") as client:
+        # Issue #6: session creation requires a login in every mode.
+        login_client(client, "feedback_comments_e2e_user")
         created = client.post("/api/sessions")
         assert created.status_code == 200
         session_id = created.json()["session_id"]
