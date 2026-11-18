@@ -9,9 +9,12 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.metrics import MetricsStore
+from conftest import login_client
 
 
 def _answer(client: TestClient, request_id: str) -> tuple[str, str]:
+    # Issue #6: /api/sessions requires a session in every mode.
+    login_client(client, "feedback_change_vote_user")
     session_id = client.post("/api/sessions").json()["session_id"]
     answer = client.post(
         "/api/chat",
