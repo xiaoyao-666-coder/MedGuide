@@ -20,7 +20,7 @@ from typing import Any
 from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, field_validator
 
 from .auth import (
     AuthStore,
@@ -176,6 +176,17 @@ class ChatRequest(BaseModel):
         max_length=128,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]+$",
     )
+
+    @field_validator("message")
+    @classmethod
+    def _reject_blank_message(cls, value: str) -> str:
+        # Issue #43: a whitespace-only message counted toward min_length=1
+        # and was answered as a normal question. Reject it the same way the
+        # feedback path rejects blank comments; the text itself is returned
+        # unchanged, so messages with surrounding whitespace still work.
+        if not value.strip():
+            raise ValueError("消息不能为空")
+        return value
 
 
 class ChatResponse(BaseModel):

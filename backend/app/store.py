@@ -398,6 +398,27 @@ class SessionStore:
             "risk_level": state.get("risk_level") if state.get("risk_assessed") else None,
         }
 
+    @staticmethod
+    def _sort_newest_first(states: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Sort session states newest-first.
+
+        Sessions are ordered by ``updated_at`` descending. Sessions without
+        any activity have no ``updated_at``; ties break by creation order,
+        newest first (issue #44). The input list preserves the store's
+        insertion order, which is creation order, so the position in the
+        list is the creation-order tiebreak. An empty session still sorts
+        below sessions with any activity, because there is no creation
+        timestamp to interleave by; the guarantee is newest-first among
+        never-active sessions, and chatted sessions keep their existing
+        updated_at order.
+        """
+        indexed = list(enumerate(states))
+        indexed.sort(
+            key=lambda pair: (str(pair[1].get("updated_at") or ""), pair[0]),
+            reverse=True,
+        )
+        return [state for _, state in indexed]
+
     def list_sessions(self, owner_id: str | None = None) -> list[dict[str, Any]]:
         """Return one owner's unexpired sessions, newest first.
 
@@ -420,7 +441,7 @@ class SessionStore:
                 for state in (remote_states or [])
                 if isinstance(state, dict) and str(state.get("owner_id", "")) == owner
             ]
-            states.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)
+            states = self._sort_newest_first(states)
             return [self._session_list_entry(state) for state in states]
         with self._lock:
             self._purge_expired()
@@ -429,7 +450,7 @@ class SessionStore:
                 for state in self._sessions.values()
                 if str(state.get("owner_id", "")) == owner
             ]
-        states.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)
+        states = self._sort_newest_first(states)
         return [self._session_list_entry(state) for state in states]
 
     @staticmethod

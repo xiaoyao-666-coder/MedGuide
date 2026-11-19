@@ -100,6 +100,46 @@ def test_session_list_is_newest_first_and_owner_scoped(client: TestClient) -> No
         bob.close()
 
 
+def test_empty_sessions_list_newest_first(client: TestClient) -> None:
+    # Issue #44: never-active sessions have no updated_at, so sorting by it
+    # alone left them in creation order (oldest first). They must also be
+    # newest-first.
+    _register(client, "list_empty")
+    created = [
+        client.post("/api/sessions").json()["session_id"] for _ in range(3)
+    ]
+    listed = client.get("/api/sessions").json()
+    assert listed["complete"] is True
+    assert [item["session_id"] for item in listed["sessions"]] == list(reversed(created))
+
+
+def test_empty_and_active_sessions_mixed_order(client: TestClient) -> None:
+    # Issue #44: chatted sessions keep their updated_at order; the empty
+    # ones behind them are newest-first instead of creation order.
+    _register(client, "list_mixed")
+    first_id = client.post("/api/sessions").json()["session_id"]
+    second_id = client.post("/api/sessions").json()["session_id"]
+    third_id = client.post("/api/sessions").json()["session_id"]
+    _chat(client, first_id, "我咳嗽三天", "turn-list-mixed-0001")
+
+    listed = client.get("/api/sessions").json()
+    assert [item["session_id"] for item in listed["sessions"]] == [
+        first_id,
+        third_id,
+        second_id,
+    ]
+
+
+def test_many_empty_sessions_list_newest_first(client: TestClient) -> None:
+    # Issue #44, batch check: the newest empty session is first.
+    _register(client, "list_many_empty")
+    created = [
+        client.post("/api/sessions").json()["session_id"] for _ in range(25)
+    ]
+    listed = client.get("/api/sessions").json()
+    assert [item["session_id"] for item in listed["sessions"]] == list(reversed(created))
+
+
 def test_cross_user_session_read_returns_404(client: TestClient) -> None:
     _register(client, "history_owner")
     session_id = client.post("/api/sessions").json()["session_id"]
