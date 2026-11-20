@@ -4,6 +4,11 @@ Root cause: BM25 matched the UTI document through the generic token
 "疼痛" alone (and cold/cough/diarrhoea documents through "持续"), so a
 question about a topic the knowledge base does not cover was answered
 with unrelated material presented as the most relevant source.
+
+The knowledge base gained a knee-joint document on 2026-11-20
+(disease-knee-001, NHS knee pain page), so leg/joint pain now has
+topical coverage: the gate still blocks the UTI document, but the
+knee document is cited instead of answering "insufficient-data".
 """
 from app.retrieval import HybridRetriever
 from app.safety import SafetyEngine
@@ -19,13 +24,18 @@ def _ids(result: dict) -> list[str]:
     return [item["id"] for item in result.get("citations", [])]
 
 
-# --- retrieval level: generic-only matches must not become citations ---
+# --- retrieval level: leg/joint pain now has topical coverage ---
 
-def test_leg_pain_queries_return_no_citations() -> None:
+def test_leg_pain_queries_retrieve_knee_document() -> None:
+    # Knowledge base expanded 2026-11-20 (disease-knee-001): these queries
+    # now cite the knee document instead of returning no citations. The
+    # UTI document must still never appear for them.
     retriever = HybridRetriever()
-    assert retriever.search("腿关节持续疼痛", "disease") == []
-    assert retriever.search("腿关节时长疼痛", "disease") == []
-    assert retriever.search("膝盖疼了几天", "disease") == []
+    for query in ("腿关节持续疼痛", "腿关节时长疼痛", "膝盖疼了几天"):
+        results = retriever.search(query, "disease")
+        assert results, query
+        assert results[0].id.startswith("disease-knee-001"), query
+        assert not any(item.id.startswith("disease-uti-001") for item in results), query
 
 
 def test_severity_only_query_returns_no_citations() -> None:
@@ -48,26 +58,31 @@ def test_topical_queries_are_unaffected_by_the_gate() -> None:
     assert retriever.search("发烧38.5度三天", "unknown")[0].id.startswith("disease-fever-001")
 
 
-# --- workflow level: no UTI citation, explicit data boundary ---
+# --- workflow level: knee document cited, no UTI citation ---
 
-def test_leg_pain_answer_states_insufficient_data() -> None:
+def test_leg_pain_answer_cites_knee_document() -> None:
+    # Knowledge base expanded 2026-11-20: leg pain now has topical
+    # coverage, so the workflow cites the knee document instead of
+    # answering "insufficient-data". The UTI document stays out.
     result = make_workflow().run(
         {"session_id": "leg-pain", "user_message": "腿关节持续疼痛", "profile": {}}
     )
+    assert any(item.startswith("disease-knee-001") for item in _ids(result))
     assert not any(item.startswith("disease-uti-001") for item in _ids(result))
-    assert result["answer_source"] == "insufficient-data"
-    assert "没有与你描述的情况直接相关的资料" in result["response"]
+    assert result["answer_source"] != "insufficient-data"
+    assert "没有与你描述的情况直接相关的资料" not in result["response"]
     assert "尿路感染" not in result["response"]
     assert "尿频" not in result["response"]
 
 
-def test_knee_pain_answer_states_insufficient_data() -> None:
+def test_knee_pain_answer_cites_knee_document() -> None:
     result = make_workflow().run(
         {"session_id": "knee-pain", "user_message": "膝盖疼了几天", "profile": {}}
     )
-    assert result["citations"] == []
-    assert result["answer_source"] == "insufficient-data"
-    assert "没有与你描述的情况直接相关的资料" in result["response"]
+    assert result["citations"]
+    assert any(item.startswith("disease-knee-001") for item in _ids(result))
+    assert result["answer_source"] != "insufficient-data"
+    assert "没有与你描述的情况直接相关的资料" not in result["response"]
     assert "尿路感染" not in result["response"]
 
 

@@ -7,6 +7,19 @@ import pytest
     ("头痛头疼怎么办", "disease-headache-001"),
     ("腹泻拉肚子呕吐怎样补水", "disease-diarrhoea-001"),
     ("尿频尿急尿痛", "disease-uti-001"),
+    # Knowledge base expanded 2026-11-20 (26 documents).
+    ("腿关节时长疼痛", "disease-knee-001"),
+    ("膝盖疼了几天", "disease-knee-001"),
+    ("腰背痛怎么办", "disease-backpain-001"),
+    ("胃痛肚子疼", "disease-stomachache-001"),
+    ("咽痛喉咙痛怎么办", "disease-sorethroat-001"),
+    ("头晕怎么办", "disease-dizziness-001"),
+    ("流感发烧全身酸痛", "disease-flu-001"),
+    ("过敏身上起疹子", "disease-allergy-001"),
+    ("哮喘喘不上气", "disease-asthma-001"),
+    ("失眠睡不着怎么办", "disease-insomnia-001"),
+    ("牙痛怎么办", "disease-toothache-001"),
+    ("耳痛耳朵疼", "disease-earache-001"),
 ])
 def test_common_symptom_topics_retrieve_the_relevant_document(query, document):
     results = HybridRetriever().search(query, "disease", top_k=2)
