@@ -367,9 +367,11 @@ class SessionStore:
     def listing_complete(self) -> bool:
         """Whether :meth:`list_sessions` can enumerate every session.
 
-        The in-memory store can. A shared Redis backend cannot be enumerated
-        (there is no session index), so listing is incomplete by design and
-        :meth:`list_sessions` returns ``[]`` rather than a partial list.
+        The in-memory store can, and so can a shared Redis backend: the
+        adapter keeps a per-owner session index (issue #45). A shared
+        backend that offers no ``list_states`` enumeration still cannot
+        be listed, so :meth:`list_sessions` returns ``[]`` rather than a
+        partial list.
         """
         if self.backend is None:
             return True
@@ -422,10 +424,11 @@ class SessionStore:
     def list_sessions(self, owner_id: str | None = None) -> list[dict[str, Any]]:
         """Return one owner's unexpired sessions, newest first.
 
-        Only the in-memory store can enumerate sessions. When a shared
-        backend is selected and it offers no ``list_states`` enumeration,
-        this returns ``[]`` (see :attr:`listing_complete`) instead of a
-        misleading partial list.
+        A shared backend enumerates sessions through its ``list_states``
+        method; the Redis adapter keeps a per-owner session index for this
+        (issue #45). When a shared backend offers no ``list_states``
+        enumeration, this returns ``[]`` (see :attr:`listing_complete`)
+        instead of a misleading partial list.
         """
         owner = str(owner_id or "")
         if self.backend is not None:

@@ -6,7 +6,7 @@ import hashlib
 from collections.abc import Mapping
 from datetime import date, datetime, time
 from decimal import Decimal
-from time import monotonic
+from time import monotonic, time as _epoch_seconds
 from typing import Any
 
 
@@ -56,6 +56,14 @@ class RedisSessionAdapter:
 
     prefix = "medguide:session:"
     creation_prefix = "medguide:session-create:"
+    # Per-owner session index (issue #45): a sorted set of session ids,
+    # scored by first-seen epoch microseconds, so a Redis-backed store can
+    # enumerate sessions the way the in-memory store does. Without it,
+    # list_sessions on Redis returned [] and the UI only rendered a
+    # placeholder for the current session. ZADD ... NX keeps the original
+    # (creation) score on re-save, which preserves the newest-first
+    # creation-order tiebreak for never-active sessions (issue #44).
+    index_prefix = "medguide:session-index:"
     metrics_key = "medguide:metrics:v1"
     metrics_response_prefix = "medguide:metrics:response:"
     metrics_feedback_key = "medguide:metrics:feedback:v1"
@@ -66,6 +74,8 @@ if mapped_session_id then
     local mapped_session_key = ARGV[1] .. mapped_session_id
     if redis.call('EXISTS', mapped_session_key) == 1 then
         redis.call('EXPIRE', KEYS[2], ARGV[3])
+        redis.call('ZADD', KEYS[3], 'NX', ARGV[5], mapped_session_id)
+        redis.call('EXPIRE', KEYS[3], ARGV[3])
         return mapped_session_id
     end
     redis.call('DEL', KEYS[2])
@@ -75,6 +85,8 @@ if redis.call('EXISTS', KEYS[1]) == 1 then
 end
 redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
 redis.call('SET', KEYS[2], ARGV[4], 'EX', ARGV[3])
+redis.call('ZADD', KEYS[3], 'NX', ARGV[5], ARGV[4])
+redis.call('EXPIRE', KEYS[3], ARGV[3])
 return ARGV[4]
 """
 
@@ -127,6 +139,8 @@ if redis.call('GET', KEYS[2]) ~= ARGV[4] then
 end
 redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
 redis.call('DEL', KEYS[2])
+redis.call('ZADD', KEYS[3], 'NX', ARGV[6], ARGV[5])
+redis.call('EXPIRE', KEYS[3], ARGV[3])
 return 1
 """
 
@@ -354,6 +368,36 @@ return 1
         digest = hashlib.sha256(f"{owner_id}\x00{idempotency_key}".encode("utf-8")).hexdigest()
         return f"{cls.creation_prefix}{digest}"
 
+    @classmethod
+    def _index_key(cls, owner_id: str = "") -> str:
+        # Same rule as _creation_key: the owner is caller-controlled text,
+        # so the index key carries its hash, not the raw owner id.
+        digest = hashlib.sha256(str(owner_id or "").encode("utf-8")).hexdigest()
+        return f"{cls.index_prefix}{digest}"
+
+    def _record_index(self, target: Any, owner_id: str, session_id: str, ttl_seconds: int) -> bool:
+        """Add one session to its owner's index on ``target`` (client or pipeline).
+
+        The index is a sorted set scored by first-seen epoch microseconds
+        (``ZADD ... NX`` keeps the original score on re-save), so listing a
+        Redis-backed store preserves creation order the way the in-memory
+        store's insertion order does (issue #44's newest-first tiebreak).
+        Best effort: returns False when the target cannot index (tiny fakes
+        without ZADD/EXPIRE) or the call fails. The session record itself is
+        unaffected, and its next save re-indexes it.
+        """
+        zadd = getattr(target, "zadd", None)
+        expire = getattr(target, "expire", None)
+        if not callable(zadd) or not callable(expire):
+            return False
+        try:
+            index_key = self._index_key(owner_id)
+            zadd(index_key, {session_id: int(_epoch_seconds() * 1_000_000)}, nx=True)
+            expire(index_key, int(ttl_seconds))
+        except Exception:
+            return False
+        return True
+
     def get_session_creation(self, idempotency_key: str, owner_id: str = "") -> str | None:
         if not idempotency_key or not self.ensure_ready() or self.client is None:
             return None
@@ -424,13 +468,15 @@ return 1
         try:
             winner = evaluator(
                 self._CREATE_SESSION_SCRIPT,
-                2,
+                3,
                 self._key(session_id),
                 self._creation_key(idempotency_key, owner_id),
+                self._index_key(owner_id),
                 self.prefix,
                 payload,
                 ttl,
                 session_id,
+                int(_epoch_seconds() * 1_000_000),
             )
             if isinstance(winner, bytes):
                 winner = winner.decode("utf-8")
@@ -816,6 +862,49 @@ return 1
             raise _SessionPayloadError("Redis session payload is invalid") from exc
         return self._validate_payload(payload, session_id)
 
+    def list_states(self, owner_id: str = "") -> list[dict[str, Any]]:
+        """Return one owner's live session states (issue #45).
+
+        Reads the per-owner session index, then fetches each session.
+        Index members whose record has expired or is corrupt are skipped,
+        so a stale entry can never fail the whole listing: the index is a
+        lookup aid, not the source of truth. Members arrive oldest-first
+        by first-seen time, mirroring the in-memory store's insertion
+        order; sorting by activity is left to the caller
+        (:meth:`SessionStore.list_sessions` orders newest-first).
+        """
+        if not self.ensure_ready() or self.client is None:
+            raise RuntimeError("Redis read failed")
+        owner = str(owner_id or "")
+        try:
+            members = self.client.zrange(self._index_key(owner), 0, -1)
+        except Exception as exc:
+            self._mark_unavailable(exc)
+            raise RuntimeError("Redis read failed") from exc
+        if not members:
+            return []
+        states: list[dict[str, Any]] = []
+        for member in members:
+            session_id = member.decode("utf-8") if isinstance(member, bytes) else str(member)
+            try:
+                raw = self.client.get(self._key(session_id))
+            except Exception as exc:
+                self._mark_unavailable(exc)
+                raise RuntimeError("Redis read failed") from exc
+            if raw is None:
+                continue
+            try:
+                if isinstance(raw, bytes):
+                    raw = raw.decode("utf-8")
+                payload = json.loads(raw) if isinstance(raw, str) else raw
+                state = self._validate_payload(payload, session_id)
+            except (UnicodeDecodeError, json.JSONDecodeError, TypeError, _SessionPayloadError):
+                continue
+            if str(state.get("owner_id", "")) != owner:
+                continue
+            states.append(state)
+        return states
+
     def save_state(
         self,
         state: dict[str, Any],
@@ -841,13 +930,16 @@ return 1
                 code = int(
                     evaluator(
                         self._SAVE_CLAIMED_SESSION_SCRIPT,
-                        2,
+                        3,
                         key,
                         self._request_key(session_id, request_id),
+                        self._index_key(str(state.get("owner_id") or "")),
                         expected_version,
                         payload,
                         self.ttl_seconds,
                         f"{fingerprint}:{token}",
+                        session_id,
+                        int(_epoch_seconds() * 1_000_000),
                     )
                 )
             except Exception as exc:
@@ -897,7 +989,20 @@ return 1
                     return False
                 pipe.multi()
                 self._set_with_ttl(pipe, key, payload, self.ttl_seconds)
+                # Index inside the same transaction when the pipeline
+                # supports it, so a saved session is listable atomically.
+                indexed = self._record_index(
+                    pipe, str(state.get("owner_id") or ""), session_id, self.ttl_seconds
+                )
                 pipe.execute()
+                if not indexed:
+                    # Tiny pipeline doubles without ZADD/EXPIRE: index after
+                    # the successful write. The record is durable either
+                    # way; a crash in this window only delays listing until
+                    # the next save.
+                    self._record_index(
+                        self.client, str(state.get("owner_id") or ""), session_id, self.ttl_seconds
+                    )
                 return True
             except WatchError:
                 return False
@@ -912,6 +1017,11 @@ return 1
                 if current is not None and current.get("_version") != expected_version:
                     return False
             self._set_with_ttl(self.client, key, payload, self.ttl_seconds)
+            # Best effort (see the pipeline path): the record is saved; a
+            # crash before this line only delays listing until the next save.
+            self._record_index(
+                self.client, str(state.get("owner_id") or ""), session_id, self.ttl_seconds
+            )
             return True
         except _SessionPayloadError:
             raise

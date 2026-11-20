@@ -19,7 +19,10 @@ class _AtomicRedis:
     def __init__(self) -> None:
         self.values: dict[str, str] = {}
         self.hashes: dict[str, dict[str, str | int]] = {}
-        self._lock = threading.Lock()
+        self.zsets: dict[str, dict[str, float]] = {}
+        # RLock: the Lua models run under this lock and call zadd/zrevrange,
+        # which take the same lock.
+        self._lock = threading.RLock()
 
     def ping(self) -> bool:
         return True
@@ -27,6 +30,22 @@ class _AtomicRedis:
     def get(self, key: str):
         with self._lock:
             return self.values.get(key)
+
+    def zadd(self, key: str, mapping, nx: bool = False, **kwargs):
+        with self._lock:
+            zset = self.zsets.setdefault(key, {})
+            for member, score in mapping.items():
+                if nx and member in zset:
+                    continue
+                zset[member] = score
+
+    def zrange(self, key: str, start: int, stop: int):
+        with self._lock:
+            ordered = sorted(self.zsets.get(key, {}).items(), key=lambda item: (item[1], item[0]))
+            members = [member for member, _ in ordered]
+            if stop < 0:
+                stop = len(members) + stop
+            return members[start : stop + 1]
 
     def hgetall(self, key: str):
         with self._lock:
@@ -53,10 +72,11 @@ class _AtomicRedis:
         raise AssertionError("unexpected Lua script")
 
     def _create_session(self, keys, args):
-        session_key, creation_key = keys
-        prefix, payload, _ttl, session_id = args
+        session_key, creation_key, index_key = keys
+        prefix, payload, _ttl, session_id, now_us = args
         mapped = self.values.get(creation_key)
         if mapped and f"{prefix}{mapped}" in self.values:
+            self.zadd(index_key, {mapped: now_us}, nx=True)
             return mapped
         if mapped:
             self.values.pop(creation_key, None)
@@ -64,6 +84,7 @@ class _AtomicRedis:
             return ""
         self.values[session_key] = payload
         self.values[creation_key] = session_id
+        self.zadd(index_key, {session_id: now_us}, nx=True)
         return session_id
 
     def _claim_request(self, keys, args):
@@ -88,8 +109,8 @@ class _AtomicRedis:
         return 1
 
     def _save_claimed_session(self, keys, args):
-        session_key, claim_key = keys
-        expected_version, payload, _ttl, expected_claim = args
+        session_key, claim_key, index_key = keys
+        expected_version, payload, _ttl, expected_claim, session_id, now_us = args
         raw = self.values.get(session_key)
         if raw is None:
             return -2
@@ -103,6 +124,7 @@ class _AtomicRedis:
             return -1
         self.values[session_key] = payload
         self.values.pop(claim_key, None)
+        self.zadd(index_key, {session_id: now_us}, nx=True)
         return 1
 
     def _release_request(self, keys, args):
@@ -437,3 +459,50 @@ def test_shared_metrics_record_is_atomic_and_deduplicated_under_concurrency() ->
     assert snapshot["high_risk_rate"] == 1.0
     assert snapshot["safety_blocked"] == 1
     assert snapshot["hallucination_labeled"] == 1
+
+
+def test_atomic_session_creation_registers_session_index() -> None:
+    """Issue #45: an atomically created session is listable per owner."""
+    redis = _AtomicRedis()
+    adapter = RedisSessionAdapter(client=redis)
+    state = {"session_id": "mg_indexed", "owner_id": "owner", "_version": 0}
+
+    assert adapter.create_state(state, "index-create", "owner", 3600) == "mg_indexed"
+    assert [item["session_id"] for item in adapter.list_states("owner")] == ["mg_indexed"]
+    assert adapter.list_states("someone-else") == []
+    # Re-creating with the same idempotency key resolves to the same
+    # session without duplicating the index entry.
+    assert adapter.create_state(state, "index-create", "owner", 3600) == "mg_indexed"
+    assert [item["session_id"] for item in adapter.list_states("owner")] == ["mg_indexed"]
+
+
+def test_claimed_save_registers_session_index() -> None:
+    """Issue #45: a claimed commit indexes the session atomically."""
+    redis = _AtomicRedis()
+    adapter = RedisSessionAdapter(client=redis)
+    state = {
+        "session_id": "mg_claimed",
+        "owner_id": "owner",
+        "_version": 0,
+        "request_results": {},
+        "request_fingerprints": {},
+    }
+    redis.values[adapter._key("mg_claimed")] = json.dumps(state)
+    assert adapter.list_states("owner") == []
+
+    fingerprint = _message_fingerprint("我咳嗽")
+    assert adapter.claim_request("mg_claimed", "request-0001", fingerprint, "token-a") == "acquired"
+    committed = {
+        **state,
+        "_version": 1,
+        "request_fingerprints": {"request-0001": fingerprint},
+        "request_results": {"request-0001": {"session_id": "mg_claimed", "response_id": "r1"}},
+    }
+    assert adapter.save_state(
+        committed,
+        expected_version=0,
+        request_claim=("request-0001", fingerprint, "token-a"),
+    ) is True
+    listed = adapter.list_states("owner")
+    assert [item["session_id"] for item in listed] == ["mg_claimed"]
+    assert listed[0]["_version"] == 1
