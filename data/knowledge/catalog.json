@@ -227,5 +227,181 @@
     "text": "尿频、尿急、排尿疼痛可见于尿路感染，但需要医生结合具体情况判断。男性、孕期、儿童、老年人或免疫功能受影响者，以及伴发热、腰背部疼痛或血尿者，应及时就医。伴意识或言语异常时应立即寻求急救。不要自行选择抗菌药物或套用他人的处方。",
     "license": "OGL-3.0",
     "collected_at": "2026-09-10"
+  },
+  {
+    "id": "disease-knee-001",
+    "title": "膝关节疼痛的居家处理与就医提示",
+    "category": "disease",
+    "source": "MedGuide 中文整理（OGL-3.0）",
+    "source_url": "https://www.nhs.uk/conditions/knee-pain/",
+    "updated_at": "2023-12-21",
+    "tags": [
+      "膝盖",
+      "关节痛",
+      "腿疼"
+    ],
+    "text": "膝关节疼痛常可在家处理，数天内开始好转：尽量少负重、避免长时间站立，冰袋隔毛巾每次敷最多20分钟、每2至3小时一次。数周仍无好转应咨询医生。膝盖极痛、无法活动或承重、明显肿胀变形、卡住或打软腿，以及伴高热且膝盖周围发红发烫时，应及时寻求医疗帮助。",
+    "license": "OGL-3.0",
+    "collected_at": "2026-11-20"
+  },
+  {
+    "id": "disease-backpain-001",
+    "title": "背痛的居家处理与危险信号",
+    "category": "disease",
+    "source": "MedGuide 中文整理（OGL-3.0）",
+    "source_url": "https://www.nhs.uk/conditions/back-pain/",
+    "updated_at": "2026-03-05",
+    "tags": [
+      "背痛",
+      "腰痛",
+      "腰背痛"
+    ],
+    "text": "背痛（尤其腰背痛）很常见，通常数周内好转：保持活动、继续日常活动，可冷敷或热敷、做舒缓拉伸，不要长期卧床。数周无好转、影响日常活动、无故体重下降或夜间加重时应咨询医生。伴双腿麻木无力、大小便改变、胸痛或严重外伤后出现时，应立即联系当地急救服务。",
+    "license": "OGL-3.0",
+    "collected_at": "2026-11-20"
+  },
+  {
+    "id": "disease-stomachache-001",
+    "title": "腹痛（胃痛）的观察与就医提示",
+    "category": "disease",
+    "source": "MedGuide 中文整理（OGL-3.0）",
+    "source_url": "https://www.nhs.uk/conditions/stomach-ache/",
+    "updated_at": "2026-10-20",
+    "tags": [
+      "腹痛",
+      "胃痛",
+      "肚子疼"
+    ],
+    "text": "腹痛（胃痛）原因很多，常不严重、数日内缓解：可休息、留意诱因，药师可提供建议。腹痛、腹胀或消化不良持续不退或反复出现、摸到腹部肿块时应咨询医生。突然剧烈加重、呕血或呕吐物呈绿色或咖啡渣样、黑便或大量便血、完全无法排尿排便或呼吸困难时，应立即联系当地急救服务。",
+    "license": "OGL-3.0",
+    "collected_at": "2026-11-20"
+  },
+  {
+    "id": "disease-sorethroat-001",
+    "title": "咽痛的居家处理与就医提示",
+    "category": "disease",
+    "source": "MedGuide 中文整理（OGL-3.0）",
+    "source_url": "https://www.nhs.uk/conditions/sore-throat/",
+    "updated_at": "2024-04-08",
+    "tags": [
+      "咽痛",
+      "喉咙痛",
+      "嗓子疼"
+    ],
+    "text": "咽痛很常见，通常一周内自行好转：可用温盐水漱口、多喝水、吃凉软食物、休息，疼痛明显时可咨询药师。一般不需要抗生素。一周无好转、反复发作、口颈部肿块或口腔溃疡超过三周时应咨询医生。呼吸困难、无法吞咽、流口水或呼吸有尖锐哨音时，应立即联系当地急救服务。",
+    "license": "OGL-3.0",
+    "collected_at": "2026-11-20"
+  },
+  {
+    "id": "disease-dizziness-001",
+    "title": "头晕时的处理与就医提示",
+    "category": "disease",
+    "source": "MedGuide 中文整理（OGL-3.0）",
+    "source_url": "https://www.nhs.uk/conditions/dizziness/",
+    "updated_at": "2023-04-21",
+    "tags": [
+      "头晕",
+      "眩晕",
+      "头昏"
+    ],
+    "text": "头晕（头昏、眩晕）很常见，通常不严重、可自行缓解：发作时躺下休息、起身放慢、多喝水，避免突然弯腰或起身，头晕时不要开车或登高。头晕持续不退或反复发作、伴听力或视力改变、耳鸣、面部或肢体麻木无力、晕倒时，应咨询医生。",
+    "license": "OGL-3.0",
+    "collected_at": "2026-11-20"
+  },
+  {
+    "id": "disease-flu-001",
+    "title": "流感的症状与就医提示",
+    "category": "disease",
+    "source": "MedGuide 中文整理（OGL-3.0）",
+    "source_url": "https://www.nhs.uk/conditions/flu/",
+    "updated_at": "2026-02-03",
+    "tags": [
+      "流感",
+      "发热",
+      "全身酸痛"
+    ],
+    "text": "流感起病急，常有突发高热、全身酸痛、极度疲倦、干咳、咽痛和头痛，多可自行好转，但部分人可能病情较重：注意休息、多喝水，症状超过7天无好转、呼吸费力或感觉非常不适时应及时就医。65岁以上、孕期、患有长期疾病或免疫力低下者出现流感症状时应尽早就医；突发胸痛、严重呼吸困难或咳血时，应立即联系当地急救服务。",
+    "license": "OGL-3.0",
+    "collected_at": "2026-11-20"
+  },
+  {
+    "id": "disease-allergy-001",
+    "title": "过敏反应的识别与紧急处理",
+    "category": "disease",
+    "source": "MedGuide 中文整理（OGL-3.0）",
+    "source_url": "https://www.nhs.uk/conditions/allergies/",
+    "updated_at": "来源日期待复核",
+    "tags": [
+      "过敏",
+      "花粉症",
+      "荨麻疹"
+    ],
+    "text": "过敏是身体对花粉、尘螨、食物、宠物、昆虫叮咬或某些药物等平常无害物质的反应，可出现流涕、打喷嚏、眼红流泪、皮疹瘙痒、咳嗽喘息或腹泻呕吐。怀疑过敏时应咨询医生，医生可能安排过敏测试。嘴唇、舌头或喉咙突然肿胀、呼吸困难、喉头收紧、皮肤发青发灰、意识模糊或晕倒时，可能是严重过敏反应，应立即拨打急救电话，身边有肾上腺素自动注射器时按说明使用。",
+    "license": "OGL-3.0",
+    "collected_at": "2026-11-20"
+  },
+  {
+    "id": "disease-asthma-001",
+    "title": "哮喘的症状与发作处理",
+    "category": "disease",
+    "source": "MedGuide 中文整理（OGL-3.0）",
+    "source_url": "https://www.nhs.uk/conditions/asthma/",
+    "updated_at": "来源日期待复核",
+    "tags": [
+      "哮喘",
+      "气喘",
+      "呼吸困难"
+    ],
+    "text": "哮喘是常见的呼吸问题，表现为喘鸣、咳嗽、气促和胸闷，夜间和清晨常加重；哮喘发作时呼吸困难，可能危及生命。出现哮喘症状或现有治疗效果不佳、吸入器使用越来越频繁时应咨询医生。哮喘发作时保持坐直、镇静，按个人哮喘行动计划使用缓解吸入器；用药后无好转、感觉加重或手边没有吸入器时，应立即拨打急救电话。",
+    "license": "OGL-3.0",
+    "collected_at": "2026-11-20"
+  },
+  {
+    "id": "disease-insomnia-001",
+    "title": "失眠的改善方法与就医提示",
+    "category": "disease",
+    "source": "MedGuide 中文整理（OGL-3.0）",
+    "source_url": "https://www.nhs.uk/conditions/insomnia/",
+    "updated_at": "2024-03-19",
+    "tags": [
+      "失眠",
+      "睡不着",
+      "睡眠"
+    ],
+    "text": "失眠指经常入睡困难、夜间多次醒来、早醒后无法再睡或睡后仍感疲倦，通常可通过调整睡眠习惯改善：固定起床时间、睡前一小时放松、保持卧室黑暗安静、白天规律运动，睡前6小时避免烟酒茶咖、不用电子设备、白天不午睡。调整习惯无效、失眠持续数月或已影响日常生活时应咨询医生。",
+    "license": "OGL-3.0",
+    "collected_at": "2026-11-20"
+  },
+  {
+    "id": "disease-toothache-001",
+    "title": "牙痛时该看谁与等待期间的护理",
+    "category": "disease",
+    "source": "MedGuide 中文整理（OGL-3.0）",
+    "source_url": "https://www.nhs.uk/conditions/toothache/",
+    "updated_at": "来源日期待复核",
+    "tags": [
+      "牙痛",
+      "牙齿痛",
+      "牙疼"
+    ],
+    "text": "牙痛持续超过2天应看牙医，不要去找全科医生（无法提供牙科治疗）。牙痛伴发热、咬合痛、牙龈发红、口中有异味或面颊下颌肿胀时应尽快看牙医；眼周或颈部肿胀、肿胀影响呼吸吞咽说话时应立即急诊。等待就诊期间可用温盐水漱口、吃软食，避免过甜过冷过热食物和吸烟，止痛药使用前请咨询药师。",
+    "license": "OGL-3.0",
+    "collected_at": "2026-11-20"
+  },
+  {
+    "id": "disease-earache-001",
+    "title": "耳痛的居家护理与就医提示",
+    "category": "disease",
+    "source": "MedGuide 中文整理（OGL-3.0）",
+    "source_url": "https://www.nhs.uk/conditions/earache/",
+    "updated_at": "来源日期待复核",
+    "tags": [
+      "耳痛",
+      "耳朵痛",
+      "中耳炎"
+    ],
+    "text": "耳痛很常见，儿童多见，多由中耳感染引起，常数日内好转：可用温热毛巾敷耳，疼痛明显时可咨询药师用止痛药；不要往耳内塞任何东西、不要自行掏耳垢、不要让水进耳。耳痛超过2至3天、伴高热、耳部肿胀、耳内流液、听力改变或耳内有异物时，应及时就医；2岁以下儿童双耳都痛时也应就医。",
+    "license": "OGL-3.0",
+    "collected_at": "2026-11-20"
   }
 ]
